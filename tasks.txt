@@ -1,0 +1,4 @@
+- Download Cityscapes
+- Move `Integral` to Integral.lua
+- Implement it in C
+- Parallelize with OpenMP
