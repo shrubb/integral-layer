@@ -3,3 +3,5 @@
 *.png
 *.avi
 *.t7
+build/
+*.so

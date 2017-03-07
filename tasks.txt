@@ -1,4 +1,3 @@
+- Implement backward pass in C
 - Download Cityscapes
-- Move `Integral` to Integral.lua
-- Implement it in C
-- Parallelize with OpenMP
+- Try applying a 2-layer model to segmentation
