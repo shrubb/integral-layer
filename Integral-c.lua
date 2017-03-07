@@ -8,10 +8,11 @@ ffi.cdef [[
 
 void forward(
     void *intData, int h, int w, void *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float areaCoeff);
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
 
-void backward();
+void backward(
+    void *intData, void *gradOutData, int h, int w, void *deltas,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
 
 ]]
 
@@ -133,8 +134,6 @@ do
                 intData, self.h, self.w, outData, 
                 xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                 self.areaCoeff[planeIdx])
-            
-            -- outPlane:mul(self.areaCoeff[planeIdx])
         end
         
         return self.output
@@ -185,57 +184,16 @@ do
             local intData = torch.data(self.integral)
             
             -- deltas of dOut(x,y) (sum over one window)
-            local xMaxDelta, xMinDelta = 0, 0
-            local yMaxDelta, yMinDelta = 0, 0
+            -- xMinDelta, xMaxDelta, yMinDelta, yMaxDelta
+            local deltas = ffi.new('float[4]')
             
-            for x = 1,self.h do
-                for y = 1,self.w do
-                    xMaxDelta = xMaxDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    xMinDelta = xMinDelta
-                        +(intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    yMaxDelta = yMaxDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr+1,self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr  ,self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr+1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    yMinDelta = yMinDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr  ,self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr,  self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                end
-            end
+            C.backward(
+                intData, gradOutData, self.h, self.w, deltas,
+                xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
             
+            local xMinDelta, xMaxDelta = deltas[0], deltas[1]
+            local yMinDelta, yMaxDelta = deltas[2], deltas[3]
+
             self.gradXMax[planeIdx] = self.gradXMax[planeIdx] + scale * (
                 xMaxDelta * self.areaCoeff[planeIdx] -
                 outputDot / (self.xMax[planeIdx] - self.xMin[planeIdx] + 1))
