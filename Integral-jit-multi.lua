@@ -26,7 +26,7 @@ do
     end
 
     function Integral:reset()
-        -- the only parameters of the module
+        -- the only parameters of the module. Randomly initialize them
         self.xMin = torch.round((torch.rand(self.nWindows) - 0.5) * (2 * self.h * 0.3))
         self.yMin = torch.round((torch.rand(self.nWindows) - 0.5) * (2 * self.w * 0.3))
         self.xMax = torch.Tensor(self.nWindows)
@@ -36,21 +36,6 @@ do
             self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25))
             self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25))
         end
-        
-        --[[do
-            -- strict initialization for debugging
-            self.xMin[1] = 0
-            self.xMax[1] = 0
-            self.yMin[1] = 0
-            self.yMax[1] = 0
-
-            for i = 2,self.nWindows do
-                self.xMin[i] = self.xMin[i-1] - 3
-                self.xMax[i] = self.xMax[i-1] + 3
-                self.yMin[i] = self.yMin[i-1] - 3
-                self.yMax[i] = self.yMax[i-1] + 3
-            end
-        end]]
         
         -- area to normalize over
         self.areaCoeff = torch.Tensor(self.nWindows)
@@ -141,20 +126,25 @@ do
 
 
     function Integral:updateGradInput(input, gradOutput)
-        -- never call :backward() on backpropHelper!
-        self.backpropHelper = self.backpropHelper or Integral(1, self.h, self.w)
-        
         if self.gradInput then
-            self.gradInput:resize(self.h, self.w):zero()
+            -- never call :backward() on backpropHelper!
+            self.backpropHelper = self.backpropHelper or Integral(1, self.h, self.w)
+        
+            self.gradInput:resize(input:size()):zero()
             
-            for nWindow = 1,self.nWindows do
-                self.backpropHelper.xMin[1] = -self.xMax[nWindow]
-                self.backpropHelper.xMax[1] = -self.xMin[nWindow]
-                self.backpropHelper.yMin[1] = -self.yMax[nWindow]
-                self.backpropHelper.yMax[1] = -self.yMin[nWindow]
-                self.backpropHelper:recalculateArea()
-                
-                self.gradInput:add(self.backpropHelper:forward(gradOutput[nWindow]):squeeze())
+            for inputChannel = 1,input:size(1) do
+                for nWindow = 1,self.nWindows do
+                    self.backpropHelper.xMin[1] = -self.xMax[nWindow]
+                    self.backpropHelper.xMax[1] = -self.xMin[nWindow]
+                    self.backpropHelper.yMin[1] = -self.yMax[nWindow]
+                    self.backpropHelper.yMax[1] = -self.yMin[nWindow]
+                    self.backpropHelper:recalculateArea()
+                    
+                    local nOutputPlane = input:size(1)*(inputChannel-1) + nWindow
+
+                    self.gradInput[inputChannel]:add(
+                        self.backpropHelper:forward(gradOutput[nOutputPlane]):squeeze())
+                end
             end
             
             return self.gradInput
