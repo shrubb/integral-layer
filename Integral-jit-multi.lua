@@ -80,21 +80,22 @@ do
             cv.integral{input[inPlaneIdx], self.integralDouble[inPlaneIdx]}
             self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast
         
-            for outPlaneIdx = 1,self.nWindows do
+            for nWindow = 1,self.nWindows do
                 
                 -- round towards zero (?)
-                local xMinCurr = round_towards_zero(self.xMin[outPlaneIdx])
-                local xMaxCurr = round_towards_zero(self.xMax[outPlaneIdx])+1
-                local yMinCurr = round_towards_zero(self.yMin[outPlaneIdx])
-                local yMaxCurr = round_towards_zero(self.yMax[outPlaneIdx])+1
+                local xMinCurr = round_towards_zero(self.xMin[nWindow])
+                local xMaxCurr = round_towards_zero(self.xMax[nWindow])+1
+                local yMinCurr = round_towards_zero(self.yMin[nWindow])
+                local yMaxCurr = round_towards_zero(self.yMax[nWindow])+1
                 
                 -- round down (?)
-        --         local xMinCurr = torch.round(self.xMin[outPlaneIdx] - 0.499)
-        --         local xMaxCurr = torch.round(self.xMax[outPlaneIdx] - 0.499)+1
-        --         local yMinCurr = torch.round(self.yMin[outPlaneIdx] - 0.499)
-        --         local yMaxCurr = torch.round(self.yMax[outPlaneIdx] - 0.499)+1
+        --         local xMinCurr = torch.round(self.xMin[nWindow] - 0.499)
+        --         local xMaxCurr = torch.round(self.xMax[nWindow] - 0.499)+1
+        --         local yMinCurr = torch.round(self.yMin[nWindow] - 0.499)
+        --         local yMaxCurr = torch.round(self.yMax[nWindow] - 0.499)+1
                 
-                local outPlane = self.output[(inPlaneIdx-1)*self.nWindows + outPlaneIdx]
+                local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
+                local outPlane = self.output[outPlaneIdx]
                 
                 local outData = torch.data(outPlane)
                 local intData = torch.data(self.integral[inPlaneIdx])
@@ -117,13 +118,12 @@ do
                     end
                 end
                 
-                outPlane:mul(self.areaCoeff[outPlaneIdx])
+                outPlane:mul(self.areaCoeff[nWindow])
             end
         end
         
         return self.output
     end
-
 
     function Integral:updateGradInput(input, gradOutput)
         if self.gradInput then
@@ -132,7 +132,7 @@ do
         
             self.gradInput:resize(input:size()):zero()
             
-            for inputChannel = 1,input:size(1) do
+            for inPlaneIdx = 1,input:size(1) do
                 for nWindow = 1,self.nWindows do
                     self.backpropHelper.xMin[1] = -self.xMax[nWindow]
                     self.backpropHelper.xMax[1] = -self.xMin[nWindow]
@@ -140,10 +140,10 @@ do
                     self.backpropHelper.yMax[1] = -self.yMin[nWindow]
                     self.backpropHelper:recalculateArea()
                     
-                    local nOutputPlane = input:size(1)*(inputChannel-1) + nWindow
+                    local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
 
-                    self.gradInput[inputChannel]:add(
-                        self.backpropHelper:forward(gradOutput[nOutputPlane]):squeeze())
+                    self.gradInput[inPlaneIdx]:add(
+                        self.backpropHelper:forward(gradOutput[outPlaneIdx]):squeeze())
                 end
             end
             
@@ -154,89 +154,92 @@ do
     function Integral:accGradParameters(input, gradOutput, scale)
         scale = scale or 1
         
-        for planeIdx = 1,self.nWindows do
-            local outputDot = torch.dot(self.output[planeIdx], gradOutput[planeIdx])
-            
-            -- round towards zero (?)
-            -- and +1 because OpenCV's integral adds extra row and col
-            local xMinCurr = round_towards_zero(self.xMin[planeIdx])+1
-            local xMaxCurr = round_towards_zero(self.xMax[planeIdx])+1
-            local yMinCurr = round_towards_zero(self.yMin[planeIdx])+1
-            local yMaxCurr = round_towards_zero(self.yMax[planeIdx])+1
-            
-            -- round down (?)
-    --         local xMinCurr = torch.round(self.xMin[planeIdx] - 0.499)+1
-    --         local xMaxCurr = torch.round(self.xMax[planeIdx] - 0.499)+1
-    --         local yMinCurr = torch.round(self.yMin[planeIdx] - 0.499)+1
-    --         local yMaxCurr = torch.round(self.yMax[planeIdx] - 0.499)+1
-            
-            local gradOutData = torch.data(gradOutput[planeIdx])
-            local intData = torch.data(self.integral)
-            
-            -- deltas of dOut(x,y) (sum over one window)
-            local xMaxDelta, xMinDelta = 0, 0
-            local yMaxDelta, yMinDelta = 0, 0
-            
-            for x = 1,self.h do
-                for y = 1,self.w do
-                    xMaxDelta = xMaxDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    xMinDelta = xMinDelta
-                        +(intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    yMaxDelta = yMaxDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMaxCurr+1,self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr  ,self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr+1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMaxCurr,  self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
-                    
-                    yMinDelta = yMinDelta
-                        +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr  ,self.w))]
-                        - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr-1,self.w))]
-                        + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
-                            + math.max(0,math.min(y+yMinCurr,  self.w))] )
-                        * gradOutData[(x-1)*self.w + (y-1)]
+        for inPlaneIdx = 1,input:size(1) do
+            for nWindow = 1,self.nWindows do
+                local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
+                local outputDot = torch.dot(self.output[outPlaneIdx], gradOutput[outPlaneIdx])
+                
+                -- round towards zero (?)
+                -- and +1 because OpenCV's integral adds extra row and col
+                local xMinCurr = round_towards_zero(self.xMin[nWindow])
+                local xMaxCurr = round_towards_zero(self.xMax[nWindow])
+                local yMinCurr = round_towards_zero(self.yMin[nWindow])
+                local yMaxCurr = round_towards_zero(self.yMax[nWindow])
+                
+                -- round down (?)
+        --         local xMinCurr = torch.round(self.xMin[nWindow] - 0.499)+1
+        --         local xMaxCurr = torch.round(self.xMax[nWindow] - 0.499)+1
+        --         local yMinCurr = torch.round(self.yMin[nWindow] - 0.499)+1
+        --         local yMaxCurr = torch.round(self.yMax[nWindow] - 0.499)+1
+                
+                local gradOutData = torch.data(gradOutput[outPlaneIdx])
+                local intData = torch.data(self.integral[inPlaneIdx])
+                
+                -- deltas of dOut(x,y) (sum over one window)
+                local xMaxDelta, xMinDelta = 0, 0
+                local yMaxDelta, yMinDelta = 0, 0
+                
+                for x = 1,self.h do
+                    for y = 1,self.w do
+                        xMaxDelta = xMaxDelta
+                            +(intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr,  self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,  self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            + intData[math.max(0,math.min(x+xMaxCurr  ,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))] )
+                            * gradOutData[(x-1)*self.w + (y-1)]
+                        
+                        xMinDelta = xMinDelta
+                            +(intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr,  self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,  self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr  ,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))] )
+                            * gradOutData[(x-1)*self.w + (y-1)]
+                        
+                        yMaxDelta = yMaxDelta
+                            +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr+1,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr  ,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr+1,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,  self.w))] )
+                            * gradOutData[(x-1)*self.w + (y-1)]
+                        
+                        yMinDelta = yMinDelta
+                            +(intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr,  self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr  ,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,  self.w))] )
+                            * gradOutData[(x-1)*self.w + (y-1)]
+                    end
                 end
+                
+                self.gradXMax[nWindow] = self.gradXMax[nWindow] + scale * (
+                    xMaxDelta * self.areaCoeff[nWindow] -
+                    outputDot / (self.xMax[nWindow] - self.xMin[nWindow] + 1))
+                self.gradXMin[nWindow] = self.gradXMin[nWindow] + scale * (
+                    xMinDelta * self.areaCoeff[nWindow] +
+                    outputDot / (self.xMax[nWindow] - self.xMin[nWindow] + 1))
+                self.gradYMax[nWindow] = self.gradYMax[nWindow] + scale * (
+                    yMaxDelta * self.areaCoeff[nWindow] -
+                    outputDot / (self.yMax[nWindow] - self.yMin[nWindow] + 1))
+                self.gradYMin[nWindow] = self.gradYMin[nWindow] + scale * (
+                    yMinDelta * self.areaCoeff[nWindow] +
+                    outputDot / (self.yMax[nWindow] - self.yMin[nWindow] + 1))
             end
-            
-            self.gradXMax[planeIdx] = self.gradXMax[planeIdx] + scale * (
-                xMaxDelta * self.areaCoeff[planeIdx] -
-                outputDot / (self.xMax[planeIdx] - self.xMin[planeIdx] + 1))
-            self.gradXMin[planeIdx] = self.gradXMin[planeIdx] + scale * (
-                xMinDelta * self.areaCoeff[planeIdx] +
-                outputDot / (self.xMax[planeIdx] - self.xMin[planeIdx] + 1))
-            self.gradYMax[planeIdx] = self.gradYMax[planeIdx] + scale * (
-                yMaxDelta * self.areaCoeff[planeIdx] -
-                outputDot / (self.yMax[planeIdx] - self.yMin[planeIdx] + 1))
-            self.gradYMin[planeIdx] = self.gradYMin[planeIdx] + scale * (
-                yMinDelta * self.areaCoeff[planeIdx] +
-                outputDot / (self.yMax[planeIdx] - self.yMin[planeIdx] + 1))
         end
     end
 
