@@ -42,7 +42,7 @@ do
     end
 
     function Integral:reset()
-        -- the only parameters of the module
+        -- the only parameters of the module. Randomly initialize them
         self.xMin = torch.round((torch.rand(self.nWindows) - 0.5) * (2 * self.h * 0.3))
         self.yMin = torch.round((torch.rand(self.nWindows) - 0.5) * (2 * self.w * 0.3))
         self.xMax = torch.Tensor(self.nWindows)
@@ -52,21 +52,6 @@ do
             self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25))
             self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25))
         end
-        
-        --[[do
-            -- strict initialization for debugging
-            self.xMin[1] = 0
-            self.xMax[1] = 0
-            self.yMin[1] = 0
-            self.yMax[1] = 0
-
-            for i = 2,self.nWindows do
-                self.xMin[i] = self.xMin[i-1] - 3
-                self.xMax[i] = self.xMax[i-1] + 3
-                self.yMin[i] = self.yMin[i-1] - 3
-                self.yMax[i] = self.yMax[i-1] + 3
-            end
-        end]]
         
         -- area to normalize over
         self.areaCoeff = torch.Tensor(self.nWindows)
@@ -91,18 +76,12 @@ do
     end
 
     function Integral:updateOutput(input)
+        input = input:squeeze()
         if input:nDimension() ~= 2 then
             error('wrong input:nDimension()')
         end
-        
-    --     self.output:fill(input:max())
-        
+
         assert(input:size(1) == self.h and input:size(2) == self.w)
-        
-    --     local xMaxInt, xMinInt = math.floor(self.xMax), math.ceil(self.xMin)
-    --     local xMaxDiff, xMinDiff = self.xMax-xMaxInt, self.xMin-xMinInt
-    --     local yMaxInt, yMinInt = math.floor(self.yMax), math.ceil(self.yMin)
-    --     local yMaxDiff, yMinDiff = self.yMax-yMaxInt, self.yMin-yMinInt
         
         cv.integral{input, self.integralDouble}
         self.integral:copy(self.integralDouble) -- cast
