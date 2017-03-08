@@ -85,6 +85,8 @@ do
     --     local xMaxDiff, xMinDiff = self.xMax-xMaxInt, self.xMin-xMinInt
     --     local yMaxInt, yMinInt = math.floor(self.yMax), math.ceil(self.yMin)
     --     local yMaxDiff, yMinDiff = self.yMax-yMaxInt, self.yMin-yMinInt
+
+        self.output:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size())
