@@ -1,3 +1,4 @@
-- Implement backward pass in C
-- Download Cityscapes
-- Try applying a 2-layer model to segmentation
+- Отловить баг с производной (ошибка округления?)
+- Написать слой на CUDA
+- Попробовать для сегментации архитектуру, где из Input-а вместо одного Integral() параллельно считается несколько box-фильтров и несколько свёрток 3x3
+- Cityscapes
