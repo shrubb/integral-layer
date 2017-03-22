@@ -54,9 +54,14 @@ do
         return params, gradParams
     end
 
-    local function round_towards_zero(x)
-        if x >= 0 then return math.floor(x) 
-        else return math.floor(x) end
+    local function round_down(x)
+        local rounded = math.floor(x)
+        return rounded, x-rounded -- return integer and fractional parts
+    end
+
+    local function round_up(x)
+        local rounded = math.ceil(x)
+        return rounded, rounded-x -- return integer and fractional parts
     end
 
     function Integral:updateOutput(input)
@@ -65,11 +70,6 @@ do
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
-        
-    --     local xMaxInt, xMinInt = math.floor(self.xMax), math.ceil(self.xMin)
-    --     local xMaxDiff, xMinDiff = self.xMax-xMaxInt, self.xMin-xMinInt
-    --     local yMaxInt, yMinInt = math.floor(self.yMax), math.ceil(self.yMin)
-    --     local yMaxDiff, yMinDiff = self.yMax-yMaxInt, self.yMin-yMinInt
 
         self.output:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
@@ -82,27 +82,25 @@ do
         
             for nWindow = 1,self.nWindows do
                 
-                -- round towards zero (?)
-                local xMinCurr = round_towards_zero(self.xMin[nWindow])
-                local xMaxCurr = round_towards_zero(self.xMax[nWindow])+1
-                local yMinCurr = round_towards_zero(self.yMin[nWindow])
-                local yMaxCurr = round_towards_zero(self.yMax[nWindow])+1
+                -- Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
+                -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
+                -- always 0 (so it's a C-style array sum).
+
+                -- However, when computing sums, we subtract values at points 
+                -- like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
+                -- and yMin, and thus finally they are not affected.
                 
-                -- round down (?)
-        --         local xMinCurr = torch.round(self.xMin[nWindow] - 0.499)
-        --         local xMaxCurr = torch.round(self.xMax[nWindow] - 0.499)+1
-        --         local yMinCurr = torch.round(self.yMin[nWindow] - 0.499)
-        --         local yMaxCurr = torch.round(self.yMax[nWindow] - 0.499)+1
+                local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow])
+                local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
+                local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow])
+                local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
+                -- print(xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac)
                 
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
                 local outPlane = self.output[outPlaneIdx]
                 
                 local outData = torch.data(outPlane)
                 local intData = torch.data(self.integral[inPlaneIdx])
-                
-                -- must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
-                -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
-                -- always 0 (so it's a C-style array sum).
                 
                 for x = 0,self.h-1 do
                     for y = 0,self.w-1 do
@@ -115,6 +113,90 @@ do
                                 + math.max(0,math.min(y+yMinCurr,self.w))]
                             + intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
                                 + math.max(0,math.min(y+yMinCurr,self.w))]
+
+                        --[[ BEGIN FRACTIONAL PART
+                            -- xMax border
+                            +(intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr+1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            + intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            ) * xMaxCurrFrac
+
+                            -- yMax border
+                            +(intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr+1,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr+1,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            ) * yMaxCurrFrac
+
+                            -- xMin border
+                            +(intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMaxCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr-1,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            ) * xMinCurrFrac
+
+                            -- yMin border
+                            +(intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1) 
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            - intData[math.max(0,math.min(x+xMaxCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            - intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr,self.w))]
+                            + intData[math.max(0,math.min(x+xMinCurr,self.h))*(self.w+1)
+                                + math.max(0,math.min(y+yMinCurr-1,self.w))]
+                            ) * yMinCurrFrac
+                    end
+                end
+
+                local inData = torch.data(input[inPlaneIdx])
+
+                for x = 0,self.h-1 do
+                    for y = 0,self.w-1 do
+                        -- corner pixels
+                        outData[x*self.w + y] = outData[x*self.w + y]
+
+                            + xMaxCurrFrac*yMaxCurrFrac * (
+                                   (x+xMaxCurr > self.w-1 or
+                                    y+yMaxCurr > self.h-1 or
+                                    x+xMaxCurr < 0        or
+                                    y+yMaxCurr < 0) and 0
+                            or inData[(x+xMaxCurr)*self.w + (y+yMaxCurr)])
+
+                            + xMinCurrFrac*yMaxCurrFrac * (
+                                   (x+xMinCurr-1 > self.w-1 or
+                                    y+yMaxCurr   > self.h-1 or
+                                    x+xMinCurr-1 < 0        or
+                                    y+yMaxCurr   < 0) and 0
+                            or inData[(x+xMinCurr-1)*self.w + (y+yMaxCurr)])
+
+                            + xMaxCurrFrac*yMinCurrFrac * (
+                                   (x+xMaxCurr   > self.w-1 or
+                                    y+yMinCurr-1 > self.h-1 or
+                                    x+xMaxCurr   < 0        or
+                                    y+yMinCurr-1 < 0) and 0
+                            or inData[(x+xMaxCurr)*self.w + (y+yMinCurr-1)])
+
+                            + xMinCurrFrac*yMinCurrFrac * (
+                                   (x+xMinCurr-1 > self.w-1 or
+                                    y+yMinCurr-1 > self.h-1 or
+                                    x+xMinCurr-1 < 0        or
+                                    y+yMinCurr-1 < 0) and 0
+                            or inData[(x+xMinCurr-1)*self.w + (y+yMinCurr-1)])
+
+                        -- END FRACTIONAL PART ]]
                     end
                 end
                 
@@ -161,10 +243,10 @@ do
                 
                 -- round towards zero (?)
                 -- and +1 because OpenCV's integral adds extra row and col
-                local xMinCurr = round_towards_zero(self.xMin[nWindow])
-                local xMaxCurr = round_towards_zero(self.xMax[nWindow])
-                local yMinCurr = round_towards_zero(self.yMin[nWindow])
-                local yMaxCurr = round_towards_zero(self.yMax[nWindow])
+                local xMinCurr = round_down(self.xMin[nWindow])
+                local xMaxCurr = round_down(self.xMax[nWindow])
+                local yMinCurr = round_down(self.yMin[nWindow])
+                local yMaxCurr = round_down(self.yMax[nWindow])
                 
                 local gradOutData = torch.data(gradOutput[outPlaneIdx])
                 local intData = torch.data(self.integral[inPlaneIdx])
