@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib")
 
-# find_package(OpenCV 3.1 REQUIRED)
-
 find_package(OpenMP)
 set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS})
 
@@ -16,4 +14,12 @@ if (CMAKE_VERSION VERSION_LESS 3.1)
 endif()
 
 add_library(integral-c SHARED "integral-c.cpp")
-# target_link_libraries(integral-c ${OpenCV_LIBS})
+
+#### CUDA implementation ###
+
+find_package(CUDA)
+
+if (CUDA_FOUND)
+    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -arch sm_35)
+    cuda_add_library(integral-cuda SHARED "integral-cuda.cu")
+endif()
