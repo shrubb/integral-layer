@@ -209,6 +209,11 @@ do
 
     function Integral:updateGradInput(input, gradOutput)
         if self.gradInput then
+            
+            if input:nDimension() == 2 then
+                input = nn.Unsqueeze(1):forward(input)
+            end
+
             -- never call :backward() on backpropHelper!
             self.backpropHelper = self.backpropHelper or Integral(1, self.h, self.w)
         
@@ -234,8 +239,13 @@ do
     end
 
     function Integral:accGradParameters(input, gradOutput, scale)
+            
+        if input:nDimension() == 2 then
+            input = nn.Unsqueeze(1):forward(input)
+        end
+
         scale = scale or 1
-        
+
         for inPlaneIdx = 1,input:size(1) do
             for nWindow = 1,self.nWindows do
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow

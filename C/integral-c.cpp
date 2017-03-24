@@ -42,10 +42,10 @@ void backward(
     float *intData, float *gradOutData, int h, int w, float *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
 
-    float & xMaxDelta = deltas[1];
-    float & xMinDelta = deltas[0];
-    float & yMaxDelta = deltas[3];
-    float & yMinDelta = deltas[2];
+    float xMaxDelta = 0;
+    float xMinDelta = 0;
+    float yMaxDelta = 0;
+    float yMinDelta = 0;
 
     #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
     for (int x = 1; x <= h; ++x) {
@@ -95,6 +95,11 @@ void backward(
                     + min(w,lClip)] );
         }
     }
+
+    deltas[1] = xMaxDelta;
+    deltas[0] = xMinDelta;
+    deltas[3] = yMaxDelta;
+    deltas[2] = yMinDelta;
 }
 
 void backward1(

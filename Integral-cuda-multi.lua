@@ -1,3 +1,4 @@
+require 'cutorch'
 require 'nn'
 
 ffi = require 'ffi'
@@ -6,7 +7,7 @@ local _, parent = torch.class('Integral', 'nn.Module')
 
 ffi.cdef [[
 
-void forward(
+void forwardCuda(
     void *intData, int h, int w, void *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
 
@@ -14,9 +15,15 @@ void backward(
     void *intData, void *gradOutData, int h, int w, void *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
 
+void forwardCuda1(
+    void *intData, int h, int w, void *outData,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
+
 ]]
 
 local C = ffi.load('C/lib/libintegral-cuda.so')
+
+C.forwardCuda1(nil, 666, 666, nil, 1, 2, 3, 4, 5.31)
 
 do
     cv = require 'cv'
@@ -26,9 +33,9 @@ do
     function Integral:__init(nWindows, h, w)
         parent.__init(self)
         self.nWindows, self.h, self.w = nWindows, h, w
-        self.output = torch.Tensor(self.nWindows, h, w)
+        self.output = torch.CudaTensor(self.nWindows, h, w)
         self.integralDouble = torch.DoubleTensor()
-        self.integral = torch.FloatTensor()
+        self.integral = torch.CudaTensor()
         self:reset()
         self:zeroGradParameters()
     end
@@ -89,7 +96,8 @@ do
 
         for inPlaneIdx = 1,input:size(1) do
             cv.integral{input[inPlaneIdx], self.integralDouble[inPlaneIdx]}
-            self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast
+            self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
+            local intData = torch.data(self.integral[inPlaneIdx])
         
             for nWindow = 1,self.nWindows do
                 
@@ -109,24 +117,29 @@ do
                 local outPlane = self.output[outPlaneIdx]
                 
                 local outData = torch.data(outPlane)
-                local intData = torch.data(self.integral[inPlaneIdx])
                 
                 -- must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
                 -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
                 -- always 0 (so it's a C-style array sum).
                 
-                C.forward(
+                C.forwardCuda(
                     intData, self.h, self.w, outData, 
                     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                     self.areaCoeff[nWindow])
             end
         end
         
+        self.output = self.output:float()
         return self.output
     end
 
     function Integral:updateGradInput(input, gradOutput)
         if self.gradInput then
+            
+            if input:nDimension() == 2 then
+                input = nn.Unsqueeze(1):forward(input)
+            end
+
             -- never call :backward() on backpropHelper!
             self.backpropHelper = self.backpropHelper or Integral(1, self.h, self.w)
         
@@ -152,6 +165,11 @@ do
     end
 
     function Integral:accGradParameters(input, gradOutput, scale)
+
+        if input:nDimension() == 2 then
+            input = nn.Unsqueeze(1):forward(input)
+        end
+
         scale = scale or 1
         
         for inPlaneIdx = 1,input:size(1) do
