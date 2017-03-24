@@ -31,21 +31,14 @@ package.loaded['Integral-cuda-multi'] = nil
 -- require the new fast class
 require 'Integral-cuda-multi'
 
-print(2)
 local intTest = Integral(3, 4, 4)
-print(3)
-print(forwardGold)
 local paramsTest, gradParamsTest = intTest:getParameters()
 
 paramsTest:copy(params)
 intTest:recalculateArea()
 
 -- compare results
-print('Begin forward')
 local forwardTest = intTest:forward(lena)
-print(forwardTest)
-print('End forward')
-print()
 
 local forwardErr = (forwardGold - forwardTest):abs():sum() / 
                    forwardTest:nElement() / torch.abs(forwardGold):mean()

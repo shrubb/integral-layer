@@ -41,13 +41,6 @@ void forwardCuda(
     forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr, areaCoeff);
 }
 
-void forwardCuda1(
-    float *intData, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff) {
-
-    std::cout << h << std::endl;
-}
-
 void backward(
     float *intData, float *gradOutData, int h, int w, float *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {

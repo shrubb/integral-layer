@@ -15,15 +15,9 @@ void backward(
     void *intData, void *gradOutData, int h, int w, void *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
 
-void forwardCuda1(
-    void *intData, int h, int w, void *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
-
 ]]
 
 local C = ffi.load('C/lib/libintegral-cuda.so')
-
-C.forwardCuda1(nil, 666, 666, nil, 1, 2, 3, 4, 5.31)
 
 do
     cv = require 'cv'
