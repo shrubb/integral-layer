@@ -33,9 +33,14 @@ do
     function Integral:__init(nWindows, h, w)
         parent.__init(self)
         self.nWindows, self.h, self.w = nWindows, h, w
-        self.output = torch.CudaTensor(self.nWindows, h, w)
+        
+        self.outputCuda = torch.CudaTensor(self.nWindows, h, w)
+        self.output = torch.FloatTensor(self.outputCuda:size())
+        
         self.integralDouble = torch.DoubleTensor()
-        self.integral = torch.CudaTensor()
+        self.integral = torch.FloatTensor()
+        self.integralCuda = torch.CudaTensor()
+        
         self:reset()
         self:zeroGradParameters()
     end
@@ -89,15 +94,19 @@ do
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
 
-        self.output:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+        self.outputCuda:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+        self.output:resize(self.outputCuda:size())
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size())
+        self.integralCuda:resize(self.integralDouble:size())
 
         for inPlaneIdx = 1,input:size(1) do
+
             cv.integral{input[inPlaneIdx], self.integralDouble[inPlaneIdx]}
-            self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
-            local intData = torch.data(self.integral[inPlaneIdx])
+            self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast
+            self.integralCuda[inPlaneIdx]:copy(self.integral[inPlaneIdx]) -- copy to GPU
+            local intData = torch.data(self.integralCuda[inPlaneIdx])
         
             for nWindow = 1,self.nWindows do
                 
@@ -114,9 +123,7 @@ do
         --         local yMaxCurr = torch.round(self.yMax[nWindow] - 0.499)+1
                 
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outPlane = self.output[outPlaneIdx]
-                
-                local outData = torch.data(outPlane)
+                local outData = torch.data(self.outputCuda[outPlaneIdx])
                 
                 -- must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
                 -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -129,7 +136,7 @@ do
             end
         end
         
-        self.output = self.output:float()
+        self.output:copy(self.outputCuda)
         return self.output
     end
 

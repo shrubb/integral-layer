@@ -13,7 +13,7 @@ package.loaded['Integral-cuda-multi'] = nil
 require 'Integral-jit-multi'
 
 -- compute true forward and backward results for some data
-local intGold = Integral(16, 4, 4)
+local intGold = Integral(3, 4, 4)
 local params, gradParamsGold = intGold:getParameters()
 
 local forwardGold = intGold:forward(lena)
@@ -31,7 +31,10 @@ package.loaded['Integral-cuda-multi'] = nil
 -- require the new fast class
 require 'Integral-cuda-multi'
 
-local intTest = Integral(16, 4, 4)
+print(2)
+local intTest = Integral(3, 4, 4)
+print(3)
+print(forwardGold)
 local paramsTest, gradParamsTest = intTest:getParameters()
 
 paramsTest:copy(params)
@@ -40,7 +43,9 @@ intTest:recalculateArea()
 -- compare results
 print('Begin forward')
 local forwardTest = intTest:forward(lena)
+print(forwardTest)
 print('End forward')
+print()
 
 local forwardErr = (forwardGold - forwardTest):abs():sum() / 
                    forwardTest:nElement() / torch.abs(forwardGold):mean()
