@@ -94,7 +94,6 @@ do
                 local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
                 local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow])
                 local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
-                -- print(xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac)
                 
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
                 local outPlane = self.output[outPlaneIdx]

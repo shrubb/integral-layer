@@ -31,21 +31,23 @@ package.loaded['Integral-cuda-multi'] = nil
 -- require the new fast class
 require 'Integral-cuda-multi'
 
-local intTest = Integral(3, 4, 4)
+local intTest = Integral(3, 4, 4):cuda()
 local paramsTest, gradParamsTest = intTest:getParameters()
 
 paramsTest:copy(params)
 intTest:recalculateArea()
 
 -- compare results
+lena = lena:cuda()
+
 local forwardTest = intTest:forward(lena)
 
-local forwardErr = (forwardGold - forwardTest):abs():sum() / 
+local forwardErr = (forwardGold - forwardTest:float()):abs():sum() / 
                    forwardTest:nElement() / torch.abs(forwardGold):mean()
 print('Output mean relative error:', forwardErr * 100 .. ' %')
 
-local gradInputTest = intTest:backward(lena, forwardGold)
-local gradInputErr = (gradInputGold - gradInputTest):abs():sum() / 
+local gradInputTest = intTest:backward(lena, forwardGold:cuda())
+local gradInputErr = (gradInputGold - gradInputTest:float()):abs():sum() / 
                      gradInputTest:nElement() / torch.abs(gradInputGold):mean()
 print('gradInput mean relative error:', gradInputErr * 100 .. ' %')
 local gradParamsErr = (gradParamsGold - gradParamsTest):abs():sum() / 

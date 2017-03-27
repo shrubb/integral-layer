@@ -41,7 +41,7 @@ void forwardCuda(
     forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr, areaCoeff);
 }
 
-void backward(
+void backwardStub(
     float *intData, float *gradOutData, int h, int w, float *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
 
