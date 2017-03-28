@@ -18,11 +18,15 @@ local C_lib = ffi.load('C/lib/libintegral-c.so')
 
 ffi.cdef [[
 void forwardCuda(
-    void *intData, int h, int w, void *outData,
+    float *intData, int h, int w, int nWindows, float *outData,
+    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff);
+
+void forwardCudaSingle(
+    float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
 
 void backwardStub(
-    void *intData, void *gradOutData, int h, int w, void *deltas,
+    float *intData, float *gradOutData, int h, int w, float *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
 
 local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
@@ -92,8 +96,10 @@ do
         tensorCache = tensorCache or {}
 
         -- convert only specified tensors
-        -- don't forget gradInput
-        for _,param in ipairs{'output', 'gradInput'} do
+        -- maybe finally replace this with `self:type(type, tensorCache)`
+        -- remaining:
+        -- `grad...`, `integral`, `integralCuda`, `integralDouble`
+        for _,param in ipairs{'output', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff'} do
             self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
         end
 
@@ -182,9 +188,8 @@ do
                 local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
                 
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outPlane = self.output[outPlaneIdx]
                 
-                local outData = torch.data(outPlane)
+                local outData = torch.data(self.output[outPlaneIdx])
                 local intData = torch.data(self.integral[inPlaneIdx])
                 
                 C_lib.forward(
@@ -214,31 +219,15 @@ do
 
             cv.integral{input[inPlaneIdx]:float(), self.integralDouble[inPlaneIdx]}
             self.integralCuda[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
+            
             local intData = torch.data(self.integralCuda[inPlaneIdx])
-        
-            for nWindow = 1,self.nWindows do
-                
-                -- Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
-                -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
-                -- always 0 (so it's a C-style array sum).
-
-                -- However, when computing sums, we subtract values at points 
-                -- like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
-                -- and yMin, and thus finally they are not affected.
-                
-                local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow])
-                local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
-                local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow])
-                local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
-                
-                local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outData = torch.data(self.output[outPlaneIdx])
-                
-                CUDA_lib.forwardCuda(
-                    intData, self.h, self.w, outData, 
-                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                    self.areaCoeff[nWindow])
-            end
+            local outData = torch.data(self.output)
+            
+            CUDA_lib.forwardCuda(
+                intData, self.h, self.w, self.nWindows, outData, 
+                torch.data(self.xMin), torch.data(self.xMax),
+                torch.data(self.yMin), torch.data(self.yMax),
+                torch.data(self.areaCoeff))
         end
         
         return self.output
