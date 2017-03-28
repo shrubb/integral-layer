@@ -320,15 +320,15 @@ do
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
 
-        self.integral:copy(self.integralDouble) -- cast; TEMPORARY
-        gradOutput = gradOutput:float()
+        -- we have `self.integralCuda`
+        -- self.integral:copy(self.integralDouble) -- cast; TEMPORARY
 
         scale = scale or 1
         
         for inPlaneIdx = 1,input:size(1) do
             for nWindow = 1,self.nWindows do
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outputDot = torch.dot(self.output[outPlaneIdx]:float(), gradOutput[outPlaneIdx]) -- float() TEMPORARY
+                local outputDot = torch.dot(self.output[outPlaneIdx], gradOutput[outPlaneIdx])
                 
                 -- round towards zero (?)
                 -- and +1 because OpenCV's integral adds extra row and col
@@ -336,19 +336,18 @@ do
                 local xMaxCurr = round_down(self.xMax[nWindow])
                 local yMinCurr = round_down(self.yMin[nWindow])
                 local yMaxCurr = round_down(self.yMax[nWindow])
-
-                local gradOutData = torch.data(gradOutput[outPlaneIdx])
-                local intData = torch.data(self.integral[inPlaneIdx])
                 
                 -- deltas of dOut(x,y) (sum over one window)
-                local deltas = ffi.new('float[4]')
+                local deltas = torch.CudaTensor(4)
                 
-                C_lib.backward(
-                    intData, gradOutData, self.h, self.w, deltas,
+                CUDA_lib.backwardCudaSingle(
+                    torch.data(self.integralCuda[inPlaneIdx]), 
+                    torch.data(gradOutput[outPlaneIdx]), 
+                    self.h, self.w, torch.data(deltas),
                     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
 
-                local xMinDelta, xMaxDelta = deltas[0], deltas[1]
-                local yMinDelta, yMaxDelta = deltas[2], deltas[3]
+                local xMinDelta, xMaxDelta = deltas[1], deltas[2]
+                local yMinDelta, yMaxDelta = deltas[3], deltas[4]
                 
                 self.gradXMax[nWindow] = self.gradXMax[nWindow] + scale * (
                     xMaxDelta * self.areaCoeff[nWindow] -
