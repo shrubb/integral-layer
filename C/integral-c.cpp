@@ -5,6 +5,13 @@
 using std::max;
 using std::min;
 
+int omp_thread_count() {
+    int n = 0;
+    #pragma omp parallel reduction(+:n)
+    n += 1;
+    return n;
+}
+
 extern "C" {
 
 void forward(
@@ -29,13 +36,6 @@ void forward(
                 + intData[t*(w+1) + l]);
         }
     }
-}
-
-int omp_thread_count() {
-    int n = 0;
-    #pragma omp parallel reduction(+:n)
-    n += 1;
-    return n;
 }
 
 void backward(
