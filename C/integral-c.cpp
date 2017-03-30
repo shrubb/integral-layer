@@ -47,6 +47,32 @@ void backward(
     float yMaxDelta = 0;
     float yMinDelta = 0;
 
+#if 0
+    std::cout << "gold tmpArray:" << std::endl;
+    for (int x = 1; x <= h; ++x) {
+        for (int y = 1; y <= w; ++y) {
+            
+            int tClip = max(x+xMinCurr, 0);
+            int bClip = min(x+xMaxCurr, h);
+            int lClip = max(y+yMinCurr, 0);
+            int rClip = min(y+yMaxCurr, w);
+
+            if (x >= 33 or y >= 33)
+            std::cout <<    
+        gradOutData[(x-1)*w + (y-1)] * ( intData[max(0,min(x+xMaxCurr+1,h))*(w+1) 
+            + max(0,rClip)]
+        - intData[max(0,bClip)*(w+1) 
+            + max(0,rClip)]
+        - intData[max(0,min(x+xMaxCurr+1,h))*(w+1)
+            + max(0,min(y+yMinCurr-1,w))]
+        + intData[max(0,bClip)*(w+1)
+            + max(0,min(y+yMinCurr-1,w))] ) << " ";
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+#endif
+
     #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
     for (int x = 1; x <= h; ++x) {
         for (int y = 1; y <= w; ++y) {
@@ -93,57 +119,6 @@ void backward(
                     + max(0,min(y+yMinCurr-1,w))]
                 + intData[max(0,min(x+xMinCurr-1,h))*(w+1)
                     + min(w,lClip)] );
-        }
-    }
-
-    deltas[1] = xMaxDelta;
-    deltas[0] = xMinDelta;
-    deltas[3] = yMaxDelta;
-    deltas[2] = yMinDelta;
-}
-
-void backward1(
-    float *intData, float *gradOutData, int h, int w, float *deltas,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    float xMaxDelta = 0;
-    float xMinDelta = 0;
-    float yMaxDelta = 0;
-    float yMinDelta = 0;
-
-    // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
-    for (int x = 1; x <= h; ++x) {
-        for (int y = 1; y <= w; ++y) {
-
-            int t = max(0, min(x+xMinCurr, h) );
-            int b = max(0, min(x+xMaxCurr, h) );
-            int l = max(0, min(y+yMinCurr, w) );
-            int r = max(0, min(y+yMaxCurr, w) );
-            // float coeff = gradOutData[(x-1)*w + (y-1)];
-
-            xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[min(b+1, h)*(w+1) + r]
-                - intData[b*(w+1) + r]
-                - intData[min(b+1, h)*(w+1) + max(l-1, 0)]
-                + intData[b*(w+1) + max(l-1, 0)] );
-            
-            xMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[max(t-1, 0)*(w+1) + r]
-                - intData[t*(w+1) + r]
-                - intData[max(t-1, 0)*(w+1) + max(l-1, 0)]
-                + intData[t*(w+1) + max(l-1, 0)] );
-            
-            yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[b*(w+1) + min(r+1, w)]
-                - intData[b*(w+1) + r]
-                - intData[max(t-1, 0)*(w+1) + min(r+1, w)]
-                + intData[max(t-1, 0)*(w+1) + r] );
-            
-            yMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[b*(w+1) + max(l-1, 0)]
-                - intData[b*(w+1) + l]
-                - intData[max(t-1, 0)*(w+1) + max(l-1, 0)]
-                + intData[max(t-1, 0)*(w+1) + l] );
         }
     }
 

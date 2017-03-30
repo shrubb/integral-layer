@@ -1,4 +1,3 @@
-require 'cutorch'
 require 'nn'
 
 ffi = require 'ffi'
@@ -25,11 +24,17 @@ void forwardCudaSingle(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr, float areaCoeff);
 
-void backwardStub(
-    float *intData, float *gradOutData, int h, int w, float *deltas,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
+void backwardCudaSingle(
+    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
+    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
 
 local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+
+require 'cutorch'
+
+-- io.stdout:write('warm '); io.stdout:flush()
+torch.CudaTensor(4,4) -- warm up
+-- print('up')
 
 do
     cv = require 'cv'
@@ -88,9 +93,13 @@ do
         if type == 'torch.CudaTensor' then
             self.updateOutput = updateOutputGPU
             self.accGradParameters = accGradParametersGPU
+            self.tmpArrayGPU = torch.CudaTensor(self.h, self.w)
+            self.tmpArraySumGPU = torch.CudaTensor(self.h, self.w)
         else
             self.updateOutput = updateOutputCPU
             self.accGradParameters = accGradParametersCPU
+            self.tmpArrayGPU = nil
+            self.tmpArraySumGPU = nil
         end
 
         tensorCache = tensorCache or {}
@@ -98,15 +107,18 @@ do
         -- convert only specified tensors
         -- maybe finally replace this with `self:type(type, tensorCache)`
         -- remaining:
-        -- `grad...`, `integral`, `integralCuda`, `integralDouble`
+        -- `grad...`, `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`
+
+        -- io.stdout:write('warm '); io.stdout:flush()
         for _,param in ipairs{'output', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff'} do
             self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
         end
+        -- print('up')
 
         if self.backpropHelper then
             self.backpropHelper:type(type, tensorCache)
         end
-
+        
         self._type = type
         return self
     end
@@ -338,11 +350,13 @@ do
                 local yMaxCurr = round_down(self.yMax[nWindow])
                 
                 -- deltas of dOut(x,y) (sum over one window)
-                local deltas = torch.CudaTensor(4)
+                local deltas = torch.FloatTensor(4)
                 
                 CUDA_lib.backwardCudaSingle(
                     torch.data(self.integralCuda[inPlaneIdx]), 
                     torch.data(gradOutput[outPlaneIdx]), 
+                    torch.data(self.tmpArrayGPU),
+                    torch.data(self.tmpArraySumGPU),
                     self.h, self.w, torch.data(deltas),
                     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
 
