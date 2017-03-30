@@ -30,12 +30,6 @@ void backwardCudaSingle(
 
 local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
 
-require 'cutorch'
-
--- io.stdout:write('warm '); io.stdout:flush()
-torch.CudaTensor(4,4) -- warm up
--- print('up')
-
 do
     cv = require 'cv'
     require 'cv.imgproc'
@@ -53,7 +47,6 @@ do
         
         self.integralDouble = torch.DoubleTensor()
         self.integral = torch.FloatTensor()
-        self.integralCuda = torch.CudaTensor()
 
         -- the only parameters of the module: box filter anchor and size
         self.xMin = torch.FloatTensor(self.nWindows)
@@ -91,15 +84,22 @@ do
         end
 
         if type == 'torch.CudaTensor' then
+            -- io.stdout:write('warm '); io.stdout:flush()
+            require 'cutorch'
+            torch.CudaTensor(4,4) -- warm up
+            -- print('up')
+
             self.updateOutput = updateOutputGPU
             self.accGradParameters = accGradParametersGPU
             self.tmpArrayGPU = torch.CudaTensor(self.h, self.w)
             self.tmpArraySumGPU = torch.CudaTensor(self.h, self.w)
+            self.integralCuda = torch.CudaTensor()
         else
             self.updateOutput = updateOutputCPU
             self.accGradParameters = accGradParametersCPU
             self.tmpArrayGPU = nil
             self.tmpArraySumGPU = nil
+            self.integralCuda = nil
         end
 
         tensorCache = tensorCache or {}
@@ -121,6 +121,25 @@ do
         
         self._type = type
         return self
+    end
+
+    -- overload
+    function Integral:write(file)
+        local originalType = self:type()
+        self:float()
+        -- get rid of ffi's userdata upvalues
+        self.updateOutput = nil
+        self.accGradParameters = nil
+
+        parent.write(self, file)
+
+        self:type(originalType)
+    end
+
+    -- overload
+    function Integral:read(file)
+        parent.read(self, file)
+        self:float()
     end
 
     -- renew normalization coeffs
