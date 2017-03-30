@@ -30,6 +30,8 @@ void backwardCudaSingle(
 
 local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
 
+require 'cutorch'
+
 do
     cv = require 'cv'
     require 'cv.imgproc'
@@ -85,7 +87,6 @@ do
 
         if type == 'torch.CudaTensor' then
             -- io.stdout:write('warm '); io.stdout:flush()
-            require 'cutorch'
             torch.CudaTensor(4,4) -- warm up
             -- print('up')
 
@@ -110,7 +111,9 @@ do
         -- `grad...`, `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`
 
         -- io.stdout:write('warm '); io.stdout:flush()
-        for _,param in ipairs{'output', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff'} do
+        for _,param in ipairs{
+                'output', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
+                'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'} do
             self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
         end
         -- print('up')
