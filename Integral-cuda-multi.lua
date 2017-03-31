@@ -128,21 +128,26 @@ do
 
     -- overload
     function Integral:write(file)
-        local originalType = self:type()
-        self:float()
-        -- get rid of ffi's userdata upvalues
-        self.updateOutput = nil
-        self.accGradParameters = nil
-
-        parent.write(self, file)
-
-        self:type(originalType)
+        file:writeObject(self.nWindows)
+        file:writeObject(self.h)
+        file:writeObject(self.w)
+        file:writeObject(self.xMin)
+        file:writeObject(self.xMax)
+        file:writeObject(self.yMin)
+        file:writeObject(self.yMax)
     end
 
     -- overload
     function Integral:read(file)
-        parent.read(self, file)
-        self:float()
+        local nWindows = file:readObject()
+        local h = file:readObject()
+        local w = file:readObject()
+        self:__init(nWindows, h, w)
+        self.xMin = file:readObject()
+        self.xMax = file:readObject()
+        self.yMin = file:readObject()
+        self.yMax = file:readObject()
+        self:recalculateArea()
     end
 
     -- renew normalization coeffs
@@ -155,12 +160,12 @@ do
 
     function Integral:reset()
         -- the only parameters of the module. Randomly initialize them
-        self.xMin:rand(self.nWindows):add(-0.64):mul(2 * self.h * 0.16)
-        self.yMin:rand(self.nWindows):add(-0.64):mul(2 * self.w * 0.16)
+        self.xMin:rand(self.nWindows):add(-0.64):mul(2 * self.h * 0.43) --0.16)
+        self.yMin:rand(self.nWindows):add(-0.64):mul(2 * self.w * 0.43) --0.16)
         
         for i = 1,self.nWindows do
-            self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25))
-            self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25))
+            self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.55)) --0.25))
+            self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.55)) --0.25))
         end
         
         -- area to normalize over
@@ -191,6 +196,8 @@ do
     end
 
     function updateOutputCPU(self, input)
+        self:recalculateArea()
+
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
@@ -237,6 +244,8 @@ do
     end
 
     function updateOutputGPU(self, input)
+        self:recalculateArea()
+
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
@@ -254,8 +263,10 @@ do
             cv.integral{input[inPlaneIdx]:float(), self.integralDouble[inPlaneIdx]}
             self.integralCuda[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
             
+            local outPlaneIdx = 1 + self.nWindows*(inPlaneIdx-1)
+
             local intData = torch.data(self.integralCuda[inPlaneIdx])
-            local outData = torch.data(self.output)
+            local outData = torch.data(self.output[outPlaneIdx])
             
             CUDA_lib.forwardCuda(
                 intData, self.h, self.w, self.nWindows, outData, 

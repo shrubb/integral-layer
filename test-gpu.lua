@@ -6,12 +6,13 @@ torch.CudaTensor(4,4) -- warm up
 for k = 0,9 do
 
 require 'image'
-local lena = image.lena():mean(1):squeeze()[{{1,7}, {1,2^k}}]:contiguous()
+-- local lena = image.lena():mean(1):squeeze()[{{1,7}, {1,2^k}}]:contiguous()
+local lena = image.lena()[{{}, {1,7}, {1,2^k}}]:contiguous()
 
 require 'Integral-cuda-multi'
 
 -- compute true forward and backward results for some data
-local intGold = Integral(3, lena:size(1), lena:size(2))
+local intGold = Integral(3, lena:size(2), lena:size(3))
 local params, gradParamsGold = intGold:getParameters()
 
 local forwardGold = intGold:forward(lena)
@@ -19,7 +20,7 @@ local gradInputGold = intGold:backward(lena, forwardGold)
 
 print('Computing gold result done')
 
-local intTest = Integral(3, lena:size(1), lena:size(2))
+local intTest = Integral(3, lena:size(2), lena:size(3))
 intTest:cuda()
 local paramsTest, gradParamsTest = intTest:getParameters()
 
