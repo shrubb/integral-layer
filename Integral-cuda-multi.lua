@@ -142,11 +142,14 @@ do
         local nWindows = file:readObject()
         local h = file:readObject()
         local w = file:readObject()
+        
         self:__init(nWindows, h, w)
         self.xMin = file:readObject()
         self.xMax = file:readObject()
         self.yMin = file:readObject()
         self.yMax = file:readObject()
+
+        self:type(self.xMin:type())
         self:recalculateArea()
     end
 
