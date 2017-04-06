@@ -348,6 +348,19 @@ do
         return self.output
     end
 
+    -- that rare case when it's useful to redefine :backward()
+    function IntegralSmartNorm:backward(input, gradOutput, scale)
+       scale = scale or 1
+
+        -- recover the gradient from division
+        gradOutput = self.cdiv:updateGradInput({self.output, self.outputOnes}, gradOutput)[1]
+
+        -- substitute incoming gradOutput with it
+        self:updateGradInput(input, gradOutput)
+        self:accGradParameters(input, gradOutput, scale)
+        return self.gradInput
+    end
+
     function IntegralSmartNorm:updateGradInput(input, gradOutput)
         if self.gradInput then
             
