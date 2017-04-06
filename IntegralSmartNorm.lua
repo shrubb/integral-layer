@@ -29,9 +29,9 @@ void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
     float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
 
-local CUDA_lib --= ffi.load('C/lib/libintegral-cuda.so')
+local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
 
--- require 'cutorch'
+require 'cutorch'
 
 do
     cv = require 'cv'
@@ -206,6 +206,9 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s
         do
+            -- we put thre result in the first plane
+            local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
+
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
             -- do it just for one "input window"
@@ -233,11 +236,13 @@ do
                     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
             end
 
+            -- replace zeros with ones to avoid division-by-zero errors
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1
+
             -- then copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
                 local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-                self.outputOnes[outWindows, {}, {}}]:copy(
-                    self.outputOnes[{1, self.nWindows}, {}, {}}])
+                self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
             end
         end
 
@@ -281,8 +286,6 @@ do
     end
 
     function updateOutputGPU(self, input)
-        self:recalculateArea()
-
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
@@ -297,6 +300,11 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         do
+            -- we put thre result in the first plane
+            local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
+
+            self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+
             local outData = torch.data(self.outputOnes)
             local intData = torch.data(self.onesIntegral)
             
@@ -305,11 +313,13 @@ do
                 torch.data(self.xMin), torch.data(self.xMax),
                 torch.data(self.yMin), torch.data(self.yMax))
 
+            -- replace zeros with ones to avoid division-by-zero errors
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1
+
             -- copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
                 local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-                self.outputOnes[outWindows, {}, {}}]:copy(
-                    self.outputOnes[{1, self.nWindows}, {}, {}}])
+                self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
             end
         end
 
@@ -467,7 +477,5 @@ do
         self.yMin:add(lr, self.gradYMin)
         self.xMax:add(lr, self.gradXMax)
         self.yMax:add(lr, self.gradYMax)
-        
-        self:recalculateArea()
     end
 end

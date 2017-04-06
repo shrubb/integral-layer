@@ -29,9 +29,9 @@ void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
     float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
 
-local CUDA_lib --= ffi.load('C/lib/libintegral-cuda.so')
+local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
 
--- require 'cutorch'
+require 'cutorch'
 
 do
     cv = require 'cv'
@@ -229,8 +229,6 @@ do
     end
 
     function updateOutputGPU(self, input)
-        self:recalculateArea()
-
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
@@ -391,7 +389,5 @@ do
         self.yMin:add(lr, self.gradYMin)
         self.xMax:add(lr, self.gradXMax)
         self.yMax:add(lr, self.gradYMax)
-        
-        self:recalculateArea()
     end
 end

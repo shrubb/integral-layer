@@ -64,7 +64,7 @@ __global__ void forwardKernel(
     }
 }
 
-__global__ void forwardKernelNoNorm(
+__global__ void forwardNoNormKernel(
     float *intData, float *outData, int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
