@@ -64,6 +64,37 @@ __global__ void forwardKernel(
     }
 }
 
+__global__ void forwardKernelNoNorm(
+    float *intData, float *outData, int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax) {
+
+    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+    int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
+
+    if (x < h and y < w and z < nWindows) {
+
+        // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
+        // `integral()` behavior. Namely, I(x,0) and I(0,y) are
+        // always 0 (so it's a C-style array sum).
+
+        // However, when computing sums, we subtract values at indices 
+        // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
+        // and yMin, and thus finally they are not affected.
+
+        int t = max(0, min(x+(int)ceil (xMin[z]  ), h) );
+        int b = max(0, min(x+(int)floor(xMax[z]+1), h) );
+        int l = max(0, min(y+(int)ceil (yMin[z]  ), w) );
+        int r = max(0, min(y+(int)floor(yMax[z]+1), w) );
+
+        outData[z*w*h + x*w + y] = 
+            ( intData[b*(w+1) + r]
+            - intData[t*(w+1) + r]
+            - intData[b*(w+1) + l]
+            + intData[t*(w+1) + l]);
+    }
+}
+
 // Utility class used to avoid linker errors with extern
 // unsized shared memory arrays with templated type
 template<class T>
@@ -403,6 +434,16 @@ void forwardCuda(
     forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
 }
 
+void forwardCudaNoNorm(
+    float *intData, int h, int w, int nWindows, float *outData,
+    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
+
+    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
+    dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y, (nWindows + dimBlock.z - 1) / dimBlock.z);
+
+    forwardNoNormKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax);
+}
+
 __global__ void xMaxDeltaIntegral(
     float *intData, float *tmpArray, int h, int w,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
@@ -514,10 +555,6 @@ __global__ void yMinDeltaIntegral(
 __global__ void elementWiseProduct(float *tmpArray, float *gradOutData, int len) {
 
     int idx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (blockIdx.x > 0) {
-        // printf("Running %d\n", idx);
-    }
 
     if (idx < len) {
         tmpArray[idx] *= gradOutData[idx];
