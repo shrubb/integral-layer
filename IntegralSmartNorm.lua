@@ -237,7 +237,7 @@ do
             end
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 1
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1e-6
 
             -- then copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
@@ -314,7 +314,7 @@ do
                 torch.data(self.yMin), torch.data(self.yMax))
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 1
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1e-6
 
             -- copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
