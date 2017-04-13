@@ -48,7 +48,7 @@ do
         parent.__init(self)
         self.nWindows, self.h, self.w = nWindows, h, w
         
-        self.output = torch.FloatTensor(nWindows, h, w)
+        self.outputNonNorm = torch.FloatTensor(nWindows, h, w)
         
         self.integralDouble = torch.DoubleTensor()
         self.integral = torch.FloatTensor()
@@ -77,6 +77,9 @@ do
         if self.gradInput then
             self.gradInput = self.gradInput:float()
         end
+
+        -- dirty fix (see dirtyFix()) parameters
+        self.maxX, self.maxY = 64, 64 -- Stanford Background settings
     end
 
     -- define custom way of transferring the module to GPU
@@ -118,7 +121,7 @@ do
 
         -- io.stdout:write('warm '); io.stdout:flush()
         for _,param in ipairs{
-                'output', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
+                'outputNonNorm', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
                 'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax', 'onesIntegral',
                 'outputOnes', 'cdiv'} do
             self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
@@ -161,12 +164,12 @@ do
 
     function IntegralSmartNorm:reset()
         -- the only parameters of the module. Randomly initialize them
-        self.xMin:rand(self.nWindows):add(-0.64):mul(2 * self.h * 0.43) --0.16)
-        self.yMin:rand(self.nWindows):add(-0.64):mul(2 * self.w * 0.43) --0.16)
+        self.xMin:rand(self.nWindows):add(-0.64):mul(2 * self.h * 0.14)
+        self.yMin:rand(self.nWindows):add(-0.64):mul(2 * self.w * 0.14)
         
         for i = 1,self.nWindows do
-            self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.55)) --0.25))
-            self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.55)) --0.25))
+            self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25))
+            self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25))
         end
         
         -- loss gradients wrt module's parameters
@@ -192,14 +195,43 @@ do
         return rounded, rounded-x -- return integer and fractional parts
     end
 
+    local function dirtyFixWindows(self)
+        -- dirty fix: don't let windows explode
+        for _, borderKind in pairs{'Min', 'Max'} do
+            self['x' .. borderKind]:clamp(-self.maxX, self.maxX)
+            self['y' .. borderKind]:clamp(-self.maxY, self.maxY)
+        end
+
+        -- dirty fix: don't let windows become thinner than 1px
+        for i = 1,self.nWindows do
+            if self.xMin[i] > self.xMax[i] then
+                if math.abs(self.xMin[i]) > math.abs(self.xMax[i]) then
+                    self.xMax[i] = self.xMin[i] + 0.5
+                else
+                    self.xMin[i] = self.xMax[i] - 0.5
+                end
+            end
+
+            if self.yMin[i] > self.yMax[i] then
+                if math.abs(self.yMin[i]) > math.abs(self.yMax[i]) then
+                    self.yMax[i] = self.yMin[i] + 0.5
+                else
+                    self.yMin[i] = self.yMax[i] - 0.5
+                end
+            end
+        end
+    end
+
     function updateOutputCPU(self, input)
+        dirtyFixWindows(self)
+
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
 
-        self.output:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+        self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size())
@@ -237,7 +269,7 @@ do
             end
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 1e-6
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1
 
             -- then copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
@@ -246,7 +278,7 @@ do
             end
         end
 
-        -- next, compute non-normalized box filter map (into self.output) from input
+        -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
             for inPlaneIdx = 1,input:size(1) do
                 cv.integral{input[inPlaneIdx], self.integralDouble[inPlaneIdx]}
@@ -269,7 +301,7 @@ do
                     
                     local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
                     
-                    local outData = torch.data(self.output[outPlaneIdx])
+                    local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                     local intData = torch.data(self.integral[inPlaneIdx])
                     
                     C_lib.forwardNoNorm(
@@ -280,19 +312,21 @@ do
         end
 
         -- divide elementwise to get normalized box filter maps
-        self.output = self.cdiv:forward {self.output, self.outputOnes}
+        self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         
         return self.output
     end
 
     function updateOutputGPU(self, input)
+        dirtyFixWindows(self)
+
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
 
-        self.output:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+        self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size()) -- not used here
@@ -300,7 +334,7 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         do
-            -- we put thre result in the first plane
+            -- we put the result in the first plane
             local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
 
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
@@ -314,7 +348,7 @@ do
                 torch.data(self.yMin), torch.data(self.yMax))
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 1e-6
+            outputOnesSingle[outputOnesSingle:eq(0)] = 1
 
             -- copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
@@ -323,7 +357,7 @@ do
             end
         end
 
-        -- next, compute non-normalized box filter map (into self.output) from input
+        -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
             for inPlaneIdx = 1,input:size(1) do
 
@@ -333,7 +367,7 @@ do
                 local outPlaneIdx = 1 + self.nWindows*(inPlaneIdx-1)
 
                 local intData = torch.data(self.integralCuda[inPlaneIdx])
-                local outData = torch.data(self.output[outPlaneIdx])
+                local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                 
                 CUDA_lib.forwardCudaNoNorm(
                     intData, self.h, self.w, self.nWindows, outData, 
@@ -343,7 +377,7 @@ do
         end
 
         -- divide elementwise to get normalized box filter maps
-        self.output = self.cdiv:forward {self.output, self.outputOnes}
+        self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         
         return self.output
     end
@@ -353,7 +387,7 @@ do
        scale = scale or 1
 
         -- recover the gradient from division
-        gradOutput = self.cdiv:updateGradInput({self.output, self.outputOnes}, gradOutput)[1]
+        gradOutput = self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)[1]
 
         -- substitute incoming gradOutput with it
         self:updateGradInput(input, gradOutput)
@@ -403,7 +437,7 @@ do
         for inPlaneIdx = 1,input:size(1) do
             for nWindow = 1,self.nWindows do
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outputDot = torch.dot(self.output[outPlaneIdx], gradOutput[outPlaneIdx])
+                local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
                 
                 -- round towards zero (?)
                 -- and +1 because OpenCV's integral adds extra row and col
@@ -447,7 +481,7 @@ do
         for inPlaneIdx = 1,input:size(1) do
             for nWindow = 1,self.nWindows do
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outputDot = torch.dot(self.output[outPlaneIdx], gradOutput[outPlaneIdx])
+                local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
                 
                 -- round towards zero (?)
                 -- and +1 because OpenCV's integral adds extra row and col
