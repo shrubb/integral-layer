@@ -10,6 +10,12 @@ void forwardNoNorm(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
 
+void forwardNoNormFrac(
+    float *intData, int h, int w, float *outData,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
+    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
+    float *inData);
+
 void backwardNoNorm(
     float *intData, float *gradOutData, int h, int w, float *deltas,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
@@ -29,9 +35,11 @@ void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
     float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
 
-local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+local CUDA_lib
 
-require 'cutorch'
+if pcall(require, 'cutorch') then
+    local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+end
 
 do
     cv = require 'cv'
@@ -78,7 +86,7 @@ do
             self.gradInput = self.gradInput:float()
         end
 
-        -- dirty fix (see dirtyFix()) parameters
+        -- dirty fix (see dirtyFixWindows()) parameters
         self.maxX, self.maxY = 64, 64 -- Stanford Background settings
     end
 
@@ -168,8 +176,8 @@ do
         self.yMin:rand(self.nWindows):add(-0.64):mul(2 * self.w * 0.14)
         
         for i = 1,self.nWindows do
-            self.xMax[i] = torch.round(torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25))
-            self.yMax[i] = torch.round(torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25))
+            self.xMax[i] = torch.uniform(self.xMin[i] + self.h * 0.05, self.xMin[i] + self.h * 0.25)
+            self.yMax[i] = torch.uniform(self.yMin[i] + self.w * 0.05, self.yMin[i] + self.w * 0.25)
         end
         
         -- loss gradients wrt module's parameters
@@ -238,7 +246,7 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s
         do
-            -- we put thre result in the first plane
+            -- we put the result in the first plane
             local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
 
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
@@ -263,9 +271,15 @@ do
                 local outData = torch.data(self.outputOnes[outPlaneIdx])
                 local intData = torch.data(self.onesIntegral)
                 
-                C_lib.forwardNoNorm(
+                -- C_lib.forwardNoNorm(
+                --     intData, self.h, self.w, outData, 
+                --     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+
+                C_lib.forwardNoNormFrac(
                     intData, self.h, self.w, outData, 
-                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                    xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
+                    torch.data(torch.ones(self.h, self.w)))
             end
 
             -- replace zeros with ones to avoid division-by-zero errors
@@ -304,9 +318,15 @@ do
                     local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                     local intData = torch.data(self.integral[inPlaneIdx])
                     
-                    C_lib.forwardNoNorm(
+                    -- C_lib.forwardNoNorm(
+                    --     intData, self.h, self.w, outData, 
+                    --     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+
+                    local inData = torch.data(input[inPlaneIdx])
+                    C_lib.forwardNoNormFrac(
                         intData, self.h, self.w, outData, 
-                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                        xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac, inData)
                 end
             end
         end
