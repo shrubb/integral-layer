@@ -14,7 +14,7 @@ void forwardNoNormFrac(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData);
+    float *inData, int inDataStride, int debug);
 
 void backwardNoNorm(
     float *intData, float *gradOutData, int h, int w, float *deltas,
@@ -88,6 +88,8 @@ do
 
         -- dirty fix (see dirtyFixWindows()) parameters
         self.maxX, self.maxY = 64, 64 -- Stanford Background settings
+
+        self.debug = 0
     end
 
     -- define custom way of transferring the module to GPU
@@ -270,16 +272,19 @@ do
                 
                 local outData = torch.data(self.outputOnes[outPlaneIdx])
                 local intData = torch.data(self.onesIntegral)
-                
-                -- C_lib.forwardNoNorm(
-                --     intData, self.h, self.w, outData, 
-                --     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
 
-                C_lib.forwardNoNormFrac(
-                    intData, self.h, self.w, outData, 
-                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                    xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
-                    torch.data(torch.ones(self.h, self.w)))
+                if self.exact then
+                    local ones = torch.ones(self.h, self.w)
+                    C_lib.forwardNoNormFrac(
+                        intData, self.h, self.w, outData, 
+                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                        xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
+                        torch.data(ones), ones:stride(1), 0)
+                else
+                    C_lib.forwardNoNorm(
+                        intData, self.h, self.w, outData, 
+                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                end
             end
 
             -- replace zeros with ones to avoid division-by-zero errors
@@ -317,22 +322,32 @@ do
                     
                     local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                     local intData = torch.data(self.integral[inPlaneIdx])
-                    
-                    -- C_lib.forwardNoNorm(
-                    --     intData, self.h, self.w, outData, 
-                    --     xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
 
-                    local inData = torch.data(input[inPlaneIdx])
-                    C_lib.forwardNoNormFrac(
-                        intData, self.h, self.w, outData, 
-                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                        xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac, inData)
+                    if self.exact then
+                        local inData = torch.data(input[inPlaneIdx])
+                        -- if self.debug == 1 then
+                        --     print('input from Torch:')
+                        --     print(input[inPlaneIdx])
+                        --     print('sizes & strides:')
+                        --     print(input[inPlaneIdx]:size())
+                        --     print(input[inPlaneIdx]:stride())
+                        -- end
+                        C_lib.forwardNoNormFrac(
+                            intData, self.h, self.w, outData, 
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                            xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac, 
+                            inData, input:stride(2), self.debug)
+                    else
+                        C_lib.forwardNoNorm(
+                            intData, self.h, self.w, outData, 
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                    end
                 end
             end
         end
 
         -- divide elementwise to get normalized box filter maps
-        self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+        self.output = self.outputNonNorm --self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         
         return self.output
     end
@@ -403,17 +418,17 @@ do
     end
 
     -- that rare case when it's useful to redefine :backward()
-    function IntegralSmartNorm:backward(input, gradOutput, scale)
-       scale = scale or 1
+    -- function IntegralSmartNorm:backward(input, gradOutput, scale)
+    --    scale = scale or 1
 
-        -- recover the gradient from division
-        gradOutput = self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)[1]
+    --     -- recover the gradient from division
+    --     gradOutput = self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)[1]
 
-        -- substitute incoming gradOutput with it
-        self:updateGradInput(input, gradOutput)
-        self:accGradParameters(input, gradOutput, scale)
-        return self.gradInput
-    end
+    --     -- substitute incoming gradOutput with it
+    --     self:updateGradInput(input, gradOutput)
+    --     self:accGradParameters(input, gradOutput, scale)
+    --     return self.gradInput
+    -- end
 
     function IntegralSmartNorm:updateGradInput(input, gradOutput)
         if self.gradInput then
@@ -425,6 +440,7 @@ do
             -- never call :backward() on backpropHelper!
             -- Otherwise you'll get into infinite recursion
             self.backpropHelper = self.backpropHelper or IntegralSmartNorm(1, self.h, self.w):type(self._type)
+            self.backpropHelper.exact = self.exact
         
             self.gradInput:resize(input:size()):zero()
             
