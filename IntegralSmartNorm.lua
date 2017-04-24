@@ -14,7 +14,13 @@ void forwardNoNormFrac(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride, int debug);
+    float *inData, int inDataStride);
+
+void backwardNoNormFrac(
+    float *intData, float *gradOutData, int h, int w, float *deltas,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
+    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
+    float *inData, int inDataStride);
 
 void backwardNoNorm(
     float *intData, float *gradOutData, int h, int w, float *deltas,
@@ -88,8 +94,6 @@ do
 
         -- dirty fix (see dirtyFixWindows()) parameters
         self.maxX, self.maxY = 64, 64 -- Stanford Background settings
-
-        self.debug = 0
     end
 
     -- define custom way of transferring the module to GPU
@@ -270,6 +274,7 @@ do
                 
                 local outPlaneIdx = nWindow
                 
+                assert(self.outputOnes:stride(2) == self.w)
                 local outData = torch.data(self.outputOnes[outPlaneIdx])
                 local intData = torch.data(self.onesIntegral)
 
@@ -279,7 +284,7 @@ do
                         intData, self.h, self.w, outData, 
                         xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                         xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
-                        torch.data(ones), ones:stride(1), 0)
+                        torch.data(ones), ones:stride(1))
                 else
                     C_lib.forwardNoNorm(
                         intData, self.h, self.w, outData, 
@@ -320,23 +325,17 @@ do
                     
                     local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
                     
+                    assert(self.outputNonNorm:stride(2) == self.w)
                     local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                     local intData = torch.data(self.integral[inPlaneIdx])
 
                     if self.exact then
                         local inData = torch.data(input[inPlaneIdx])
-                        -- if self.debug == 1 then
-                        --     print('input from Torch:')
-                        --     print(input[inPlaneIdx])
-                        --     print('sizes & strides:')
-                        --     print(input[inPlaneIdx]:size())
-                        --     print(input[inPlaneIdx]:stride())
-                        -- end
                         C_lib.forwardNoNormFrac(
                             intData, self.h, self.w, outData, 
                             xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                             xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac, 
-                            inData, input:stride(2), self.debug)
+                            inData, input:stride(2))
                     else
                         C_lib.forwardNoNorm(
                             intData, self.h, self.w, outData, 
@@ -347,7 +346,7 @@ do
         end
 
         -- divide elementwise to get normalized box filter maps
-        self.output = self.outputNonNorm --self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+        self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         
         return self.output
     end
@@ -418,17 +417,17 @@ do
     end
 
     -- that rare case when it's useful to redefine :backward()
-    -- function IntegralSmartNorm:backward(input, gradOutput, scale)
-    --    scale = scale or 1
+    function IntegralSmartNorm:backward(input, gradOutput, scale)
+        scale = scale or 1
 
-    --     -- recover the gradient from division
-    --     gradOutput = self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)[1]
+        -- recover the gradient from division
+        gradOutput = self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)[1]
 
-    --     -- substitute incoming gradOutput with it
-    --     self:updateGradInput(input, gradOutput)
-    --     self:accGradParameters(input, gradOutput, scale)
-    --     return self.gradInput
-    -- end
+        -- substitute incoming gradOutput with it
+        self:updateGradInput(input, gradOutput)
+        self:accGradParameters(input, gradOutput, scale)
+        return self.gradInput
+    end
 
     function IntegralSmartNorm:updateGradInput(input, gradOutput)
         if self.gradInput then
@@ -467,30 +466,36 @@ do
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
-
-        scale = scale or 1
         
         for inPlaneIdx = 1,input:size(1) do
             for nWindow = 1,self.nWindows do
                 local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
+                -- local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
                 
-                -- round towards zero (?)
-                -- and +1 because OpenCV's integral adds extra row and col
-                local xMinCurr = round_down(self.xMin[nWindow])
-                local xMaxCurr = round_down(self.xMax[nWindow])
-                local yMinCurr = round_down(self.yMin[nWindow])
-                local yMaxCurr = round_down(self.yMax[nWindow])
+                local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow]-1)
+                local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
+                local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow]-1)
+                local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
 
+                assert(gradOutput:stride(2) == self.w)
                 local gradOutData = torch.data(gradOutput[outPlaneIdx])
                 local intData = torch.data(self.integral[inPlaneIdx])
                 
                 -- deltas of dOut(x,y) (sum over one window)
                 local deltas = ffi.new('float[4]')
                 
-                C_lib.backwardNoNorm(
-                    intData, gradOutData, self.h, self.w, deltas,
-                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                if self.exact then
+                    local inData = torch.data(input[inPlaneIdx])
+                    C_lib.backwardNoNormFrac(
+                        intData, gradOutData, self.h, self.w, deltas,
+                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                        xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
+                        inData, input:stride(2))
+                else
+                    C_lib.backwardNoNorm(
+                        intData, gradOutData, self.h, self.w, deltas,
+                        xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                end
 
                 local xMinDelta, xMaxDelta = deltas[0], deltas[1]
                 local yMinDelta, yMaxDelta = deltas[2], deltas[3]
