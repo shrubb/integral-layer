@@ -168,10 +168,10 @@ void forwardNoNormFrac(
         for (int y = 0; y < w; ++y) {
 
             // note `1` / `h-1` / `w-1` because of "replicate" interpolation
-            t = max(0, min(x+xMinCurr, h) );
-            b = max(0, min(x+xMaxCurr, h) );
-            l = max(0, min(y+yMinCurr, w) );
-            r = max(0, min(y+yMaxCurr, w) );
+            t = max(0, min(x+xMinCurr, h-1) );
+            b = max(1, min(x+xMaxCurr, h) );
+            l = max(0, min(y+yMinCurr, w-1) );
+            r = max(1, min(y+yMaxCurr, w) );
 
             outData[x*w + y] = 
                 ( intData[b*(w+1) + r]
@@ -248,9 +248,9 @@ void forwardNoNormFrac(
                     x+xMinCurr-1 < 0   or
                     y+yMinCurr-1 < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
 
-            if (std::abs(outData[x*w + y]) < 1e-3f) {
-                outData[x*w + y] = 0;
-            }
+            // if (std::abs(outData[x*w + y]) < 1e-3f) {
+            //     outData[x*w + y] = 0;
+            // }
         }
     }                            
 }
