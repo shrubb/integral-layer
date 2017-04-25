@@ -134,7 +134,7 @@ do
         -- convert only specified tensors
         -- maybe finally replace this with `self:type(type, tensorCache)`
         -- remaining:
-        -- `grad...`, `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`
+        -- `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`
 
         -- io.stdout:write('warm '); io.stdout:flush()
         for _,param in ipairs{
@@ -257,6 +257,7 @@ do
         if self.smart then
             -- we put the result in the first plane
             local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
+            assert(self.outputOnes:stride(2) == self.w) -- for C function safety
 
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
@@ -276,8 +277,7 @@ do
                 local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
                 
                 local outPlaneIdx = nWindow
-                
-                assert(self.outputOnes:stride(2) == self.w)
+
                 local outData = torch.data(self.outputOnes[outPlaneIdx])
                 local intData = torch.data(self.onesIntegral)
 
@@ -296,7 +296,7 @@ do
             end
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 100
+            -- (no need to do it anymore, I hope?)
 
             -- then copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
@@ -307,6 +307,8 @@ do
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
+            assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
+
             for inPlaneIdx = 1,input:size(1) do
                 cv.integral{input[inPlaneIdx], self.integralDouble[inPlaneIdx]}
                 self.integral[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast
@@ -327,8 +329,7 @@ do
                     local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
                     
                     local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                    
-                    assert(self.outputNonNorm:stride(2) == self.w)
+    
                     local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                     local intData = torch.data(self.integral[inPlaneIdx])
 
@@ -455,7 +456,7 @@ do
             end
 
             -- never call :backward() on backpropHelper!
-            -- Otherwise you'll get into infinite recursion
+            -- otherwise you'll get into infinite recursion
             self.backpropHelper = self.backpropHelper or IntegralSmartNorm(1, self.h, self.w):type(self._type)
             self.backpropHelper.exact = self.exact
             self.backpropHelper.smart = false

@@ -140,10 +140,10 @@ void forwardNoNorm(
         for (int y = 0; y < w; ++y) {
 
             // note `1` / `h-1` / `w-1` because of "replicate" interpolation
-            t = max(0, min(x+xMinCurr, h) );
-            b = max(0, min(x+xMaxCurr, h) );
-            l = max(0, min(y+yMinCurr, w) );
-            r = max(0, min(y+yMaxCurr, w) );
+            t = max(0, min(x+xMinCurr, h-1) );
+            b = max(1, min(x+xMaxCurr, h)   );
+            l = max(0, min(y+yMinCurr, w-1) );
+            r = max(1, min(y+yMaxCurr, w)   );
 
             outData[x*w + y] = 
                 ( intData[b*(w+1) + r]
@@ -169,9 +169,9 @@ void forwardNoNormFrac(
 
             // note `1` / `h-1` / `w-1` because of "replicate" interpolation
             t = max(0, min(x+xMinCurr, h-1) );
-            b = max(1, min(x+xMaxCurr, h) );
+            b = max(1, min(x+xMaxCurr, h)   );
             l = max(0, min(y+yMinCurr, w-1) );
-            r = max(1, min(y+yMaxCurr, w) );
+            r = max(1, min(y+yMaxCurr, w)   );
 
             outData[x*w + y] = 
                 ( intData[b*(w+1) + r]
@@ -268,50 +268,45 @@ void backwardNoNorm(
     for (int x = 1; x <= h; ++x) {
         for (int y = 1; y <= w; ++y) {
 
-            int tClip = max(0,min(x+xMinCurr  , h));
-            int bClip = max(0,min(x+xMaxCurr-1, h));
-            int lClip = max(0,min(y+yMinCurr  , w));
-            int rClip = max(0,min(y+yMaxCurr-1, w));
-
             xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
                 ( intData[max(0,min(x+xMaxCurr  , h))*(w+1) 
-                    + rClip]
-                - intData[bClip                      *(w+1) 
-                    + rClip]
+                    + max(0,min(y+yMaxCurr-1, w))]
+                - intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
+                    + max(0,min(y+yMaxCurr-1, w))]
                 - intData[max(0,min(x+xMaxCurr  , h))*(w+1)
-                    + lClip]
-                + intData[bClip                      *(w+1)
-                    + lClip]);
+                    + max(0,min(y+yMinCurr, w))]
+                + intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
+                    + max(0,min(y+yMinCurr, w))]);
             
             xMinDelta += gradOutData[(x-1)*w + (y-1)] *
                 ( intData[max(0,min(x+xMinCurr-1, h))*(w+1) 
-                    + rClip]
-                - intData[tClip                      *(w+1)
-                    + rClip]
+                    + max(0,min(y+yMaxCurr-1, w))]
+                - intData[min(h,max(x+xMinCurr  , 0))*(w+1)
+                    + max(0,min(y+yMaxCurr-1, w))]
                 - intData[max(0,min(x+xMinCurr-1, h))*(w+1)
-                    + lClip]
-                + intData[tClip                      *(w+1)
-                    + lClip]);
+                    + max(0,min(y+yMinCurr  , w))]
+                + intData[min(h,max(x+xMinCurr  , 0))*(w+1)
+                    + max(0,min(y+yMinCurr  , w))]);
             
             yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[bClip                      *(w+1) 
+                ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
                     + max(0,min(y+yMaxCurr,w))]
-                - intData[bClip                      *(w+1)
-                    + rClip]
-                - intData[tClip                      *(w+1)
+                - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
+                    + max(0,min(y+yMaxCurr-1, w))]
+                - intData[max(0,min(x+xMinCurr,h))*(w+1)
                     + max(0,min(y+yMaxCurr,w))]
-                + intData[tClip                      *(w+1)
-                    + rClip]);
+                + intData[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr-1, w))]);
             
             yMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                ( intData[bClip                      *(w+1) 
+                ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
                     + max(0,min(y+yMinCurr-1,w))]
-                - intData[bClip                      *(w+1)
-                    + lClip]
-                - intData[tClip                      *(w+1)
+                - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
+                    + min(w,max(y+yMinCurr, 0))]
+                - intData[max(0,min(x+xMinCurr  , h))*(w+1)
                     + max(0,min(y+yMinCurr-1,w))]
-                + intData[tClip                      *(w+1)
-                    + lClip]);
+                + intData[max(0,min(x+xMinCurr  , h))*(w+1)
+                    + min(w,max(y+yMinCurr, 0))]);
         }
     }
 
