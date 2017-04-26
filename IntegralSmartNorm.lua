@@ -31,6 +31,11 @@ local C_lib = ffi.load('C/lib/libintegral-c.so')
 ffi.cdef [[
 void forwardCudaNoNorm(
     float *intData, int h, int w, int nWindows, float *outData,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *inData, int inDataStrideChannel, int inDataStrideRow);
+
+void forwardCudaNoNormFrac(
+    float *intData, int h, int w, int nWindows, float *outData,
     float *xMin, float *xMax, float *yMin, float *yMax);
 
 void forwardCudaSingle(
@@ -261,6 +266,11 @@ do
 
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
+            local ones
+            if self.exact then
+                ones = torch.ones(self.h, self.w)
+            end
+
             -- do it just for one "input window"
             for nWindow = 1,self.nWindows do    
                 -- Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
@@ -282,7 +292,6 @@ do
                 local intData = torch.data(self.onesIntegral)
 
                 if self.exact then
-                    local ones = torch.ones(self.h, self.w)
                     C_lib.forwardNoNormFrac(
                         intData, self.h, self.w, outData, 
                         xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
@@ -377,22 +386,33 @@ do
         self.integralCuda:resize(self.integralDouble:size())
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
-        do
+        if self.smart then
             -- we put the result in the first plane
             local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
+            assert(self.outputOnes:stride(2) == self.w) -- for C function safety
 
             self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
             local outData = torch.data(self.outputOnes)
             local intData = torch.data(self.onesIntegral)
             
-            CUDA_lib.forwardCudaNoNorm(
-                intData, self.h, self.w, self.nWindows, outData, 
-                torch.data(self.xMin), torch.data(self.xMax),
-                torch.data(self.yMin), torch.data(self.yMax))
+            if self.exact then
+                -- TODO get rid of `ones`
+                local ones = torch.ones(self.nWindows, self.h, self.w):cuda()
+                CUDA_lib.forwardCudaNoNormFrac(
+                    intData, self.h, self.w, self.nWindows, outData, 
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax),
+                    torch.data(ones), ones:stride(1), ones:stride(2))
+            else
+                CUDA_lib.forwardCudaNoNorm(
+                    intData, self.h, self.w, self.nWindows, outData, 
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax))
+            end
 
             -- replace zeros with ones to avoid division-by-zero errors
-            outputOnesSingle[outputOnesSingle:eq(0)] = 1
+            -- (no need to do it anymore, I hope?)
 
             -- copy this result to all other output planes
             for inPlaneIdx = 2,input:size(1) do
@@ -404,6 +424,7 @@ do
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
             for inPlaneIdx = 1,input:size(1) do
+                assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
                 cv.integral{input[inPlaneIdx]:float(), self.integralDouble[inPlaneIdx]}
                 self.integralCuda[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
@@ -413,32 +434,32 @@ do
                 local intData = torch.data(self.integralCuda[inPlaneIdx])
                 local outData = torch.data(self.outputNonNorm[outPlaneIdx])
                 
-                CUDA_lib.forwardCudaNoNorm(
-                    intData, self.h, self.w, self.nWindows, outData, 
-                    torch.data(self.xMin), torch.data(self.xMax),
-                    torch.data(self.yMin), torch.data(self.yMax))
+                if self.exact then
+                    CUDA_lib.forwardCudaNoNormFrac(
+                        intData, self.h, self.w, self.nWindows, outData, 
+                        torch.data(self.xMin), torch.data(self.xMax),
+                        torch.data(self.yMin), torch.data(self.yMax),
+                        torch.data(input), input:stride(1), input:stride(2))
+                else
+                    CUDA_lib.forwardCudaNoNorm(
+                        intData, self.h, self.w, self.nWindows, outData, 
+                        torch.data(self.xMin), torch.data(self.xMax),
+                        torch.data(self.yMin), torch.data(self.yMax))
+                end
             end
         end
 
-        -- divide elementwise to get normalized box filter maps
-        self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+        if self.smart then
+            -- divide elementwise to get normalized box filter maps
+            self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+        else
+            self.output = self.outputNonNorm
+        end
 
         self._backwardDone = false
         
         return self.output
     end
-
-    -- that rare case when it's useful to redefine :backward()
-    -- function IntegralSmartNorm:backward(input, gradOutput, scale)
-    --     scale = scale or 1
-
-    --     self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
-    --     self._backwardDone = true
-
-    --     self:updateGradInput(input, nil)
-    --     self:accGradParameters(input, nil, scale)
-    --     return self.gradInput
-    -- end
 
     function IntegralSmartNorm:updateGradInput(input, gradOutput)
         if self.gradInput then
@@ -500,10 +521,14 @@ do
             local gradOutput = self.smart and self.cdiv.gradInput[k] or gradOutput
             assert(gradOutput:stride(2) == self.w) -- for C function
 
+            local ones
+            if self.smart and self.exact then
+                ones = torch.ones(self.h, self.w)
+            end
+
             for inPlaneIdx = 1,input:size(1) do
                 for nWindow = 1,self.nWindows do
                     local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                    -- local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
                     
                     local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow]-1)
                     local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
@@ -521,15 +546,14 @@ do
                     -- deltas of dOut(x,y) (sum over one window)
                     local deltas = ffi.new('float[4]')
                     
-                    if self.smart then
+                    if self.exact then
                         local inData, inStride
                         if k == 1 then
                             inData = torch.data(input[inPlaneIdx])
                             inStride = input:stride(2)
                         else -- k == 2
-                            inData = torch.ones(self.h, self.w)
-                            inStride = inData:stride(1)
-                            inData = torch.data(inData)
+                            inData = torch.data(ones)
+                            inStride = ones:stride(1)
                         end
                         
                         C_lib.backwardNoNormFrac(
@@ -557,6 +581,13 @@ do
 
     function accGradParametersGPU(self, input, gradOutput, scale)
 
+        if self.smart then
+            if not self._backwardDone then
+                self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
+                self._backwardDone = true
+            end
+        end
+
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
@@ -564,38 +595,66 @@ do
         -- we have `self.integralCuda`
         -- self.integral:copy(self.integralDouble) -- cast; TEMPORARY
 
-        scale = scale or 1
-        
-        for inPlaneIdx = 1,input:size(1) do
-            for nWindow = 1,self.nWindows do
-                local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                local outputDot = torch.dot(self.outputNonNorm[outPlaneIdx], gradOutput[outPlaneIdx])
-                
-                -- round towards zero (?)
-                -- and +1 because OpenCV's integral adds extra row and col
-                local xMinCurr = round_down(self.xMin[nWindow])
-                local xMaxCurr = round_down(self.xMax[nWindow])
-                local yMinCurr = round_down(self.yMin[nWindow])
-                local yMaxCurr = round_down(self.yMax[nWindow])
-                
-                -- deltas of dOut(x,y) (sum over one window)
-                local deltas = torch.FloatTensor(4)
-                
-                CUDA_lib.backwardCudaSingle(
-                    torch.data(self.integralCuda[inPlaneIdx]), 
-                    torch.data(gradOutput[outPlaneIdx]), 
-                    torch.data(self.tmpArrayGPU),
-                    torch.data(self.tmpArraySumGPU),
-                    self.h, self.w, torch.data(deltas),
-                    xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+        for k = 1,(self.smart and 2 or 1) do
+            -- iteration 1: gradient by outputNonNorm
+            -- iteration 2: gradient by outputOnes
+            local gradOutput = self.smart and self.cdiv.gradInput[k] or gradOutput
+            assert(gradOutput:stride(2) == self.w) -- for C function
 
-                local xMinDelta, xMaxDelta = deltas[1], deltas[2]
-                local yMinDelta, yMaxDelta = deltas[3], deltas[4]
-                
-                self.gradXMax[nWindow] = self.gradXMax[nWindow] + scale * xMaxDelta
-                self.gradXMin[nWindow] = self.gradXMin[nWindow] + scale * xMinDelta
-                self.gradYMax[nWindow] = self.gradYMax[nWindow] + scale * yMaxDelta
-                self.gradYMin[nWindow] = self.gradYMin[nWindow] + scale * yMinDelta
+            for inPlaneIdx = 1,input:size(1) do
+                for nWindow = 1,self.nWindows do
+                    local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
+                    
+                    local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow]-1)
+                    local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
+                    local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow]-1)
+                    local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
+
+                    local gradOutData = torch.data(gradOutput[outPlaneIdx])
+                    local intData
+                    if k == 1 then
+                        intData = torch.data(self.integralCuda[inPlaneIdx])
+                    else
+                        intData = torch.data(self.onesIntegral)
+                    end
+
+                    -- deltas of dOut(x,y) (sum over one window)
+                    local deltas = torch.FloatTensor(4)
+                    
+                    if self.smart then
+                        local inData, inStride
+                        if k == 1 then
+                            inData = torch.data(input[inPlaneIdx])
+                            inStride = input:stride(2)
+                        else -- k == 2
+                            inData = torch.ones(self.h, self.w)
+                            inStride = inData:stride(1)
+                            inData = torch.data(inData)
+                        end
+
+                        CUDA_lib.backwardCudaSingleFrac(
+                            intData, gradOutData,
+                            torch.data(self.tmpArrayGPU),
+                            torch.data(self.tmpArraySumGPU),
+                            self.h, self.w, torch.data(deltas),
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                    else
+                        CUDA_lib.backwardCudaSingle(
+                            intData, gradOutData,
+                            torch.data(self.tmpArrayGPU),
+                            torch.data(self.tmpArraySumGPU),
+                            self.h, self.w, torch.data(deltas),
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                    end
+
+                    local xMinDelta, xMaxDelta = deltas[1], deltas[2]
+                    local yMinDelta, yMaxDelta = deltas[3], deltas[4]
+                    
+                    self.gradXMax[nWindow] = self.gradXMax[nWindow] + scale * xMaxDelta
+                    self.gradXMin[nWindow] = self.gradXMin[nWindow] + scale * xMinDelta
+                    self.gradYMax[nWindow] = self.gradYMax[nWindow] + scale * yMaxDelta
+                    self.gradYMin[nWindow] = self.gradYMin[nWindow] + scale * yMinDelta
+                end
             end
         end
     end
