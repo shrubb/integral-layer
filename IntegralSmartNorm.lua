@@ -31,25 +31,27 @@ local C_lib = ffi.load('C/lib/libintegral-c.so')
 ffi.cdef [[
 void forwardCudaNoNorm(
     float *intData, int h, int w, int nWindows, float *outData,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideChannel, int inDataStrideRow);
+    float *xMin, float *xMax, float *yMin, float *yMax);
 
 void forwardCudaNoNormFrac(
     float *intData, int h, int w, int nWindows, float *outData,
-    float *xMin, float *xMax, float *yMin, float *yMax);
-
-void forwardCudaSingle(
-    float *intData, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *inData, int inDataStrideChannel, int inDataStrideRow);
 
 void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
-    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr); ]]
+    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
+
+void backwardCudaSingleFrac(
+    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
+    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
+    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
+    float *inData, int inDataStride); ]]
 
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
-    local CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+    CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
 end
 
 do
@@ -601,6 +603,11 @@ do
             local gradOutput = self.smart and self.cdiv.gradInput[k] or gradOutput
             assert(gradOutput:stride(2) == self.w) -- for C function
 
+            local ones
+            if self.smart and self.exact then
+                ones = torch.ones(self.h, self.w):cuda()
+            end
+
             for inPlaneIdx = 1,input:size(1) do
                 for nWindow = 1,self.nWindows do
                     local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
@@ -621,15 +628,14 @@ do
                     -- deltas of dOut(x,y) (sum over one window)
                     local deltas = torch.FloatTensor(4)
                     
-                    if self.smart then
+                    if self.exact then
                         local inData, inStride
                         if k == 1 then
                             inData = torch.data(input[inPlaneIdx])
                             inStride = input:stride(2)
                         else -- k == 2
-                            inData = torch.ones(self.h, self.w)
-                            inStride = inData:stride(1)
-                            inData = torch.data(inData)
+                            inData = torch.data(ones)
+                            inStride = ones:stride(1)
                         end
 
                         CUDA_lib.backwardCudaSingleFrac(
@@ -637,7 +643,9 @@ do
                             torch.data(self.tmpArrayGPU),
                             torch.data(self.tmpArraySumGPU),
                             self.h, self.w, torch.data(deltas),
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                            xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
+                            inData, inStride)
                     else
                         CUDA_lib.backwardCudaSingle(
                             intData, gradOutData,

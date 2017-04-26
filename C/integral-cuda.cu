@@ -540,7 +540,7 @@ void forwardCudaNoNorm(
 void forwardCudaNoNormFrac(
     float *intData, int h, int w, int nWindows, float *outData,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStride) {
+    float *inData, int inDataStrideChannel, int inDataStrideRow) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
@@ -585,12 +585,6 @@ __global__ void xMinDeltaIntegral(
     int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
 
     if (x <= h and y <= w) {
-
-        // TODO optimize
-        int tClip = max(x+xMinCurr, 0);
-        int bClip = min(x+xMaxCurr, h);
-        int lClip = max(y+yMinCurr, 0);
-        int rClip = min(y+yMaxCurr, w);
 
         tmpArray[(x-1)*w + (y-1)] = 
             ( intData[max(0,min(x+xMinCurr-1, h))*(w+1) 
@@ -890,5 +884,6 @@ void backwardCudaSingleFrac(
         xMinCurrFrac, xMaxCurrFrac, inData, inDataStride);
     elementWiseProduct <<<dimGrid1D, dimBlock1D>>> (tmpArray, gradOutData, h*w);
     deltas[2] = reduce(tmpArray, tmpArraySum, h*w);
+}
 
 } // extern "C"
