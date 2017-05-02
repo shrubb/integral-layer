@@ -165,7 +165,7 @@ __global__ void forwardNoNormFracKernel(
         ) * yMinCurrFrac
 
         // -- corner pixels
-        + xMaxCurrFrac*yMaxCurrFrac * (
+        /*+ xMaxCurrFrac*yMaxCurrFrac * (
                (x+xMaxCurr > h-1 or
                 y+yMaxCurr > w-1 or
                 x+xMaxCurr < 0   or
@@ -191,7 +191,7 @@ __global__ void forwardNoNormFracKernel(
                 y+yMinCurr-1 > w-1 or
                 x+xMinCurr-1 < 0   or
                 y+yMinCurr-1 < 0) ? 0 :
-               inData[z*inDataStrideChannel + (x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)]);
+               inData[z*inDataStrideChannel + (x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)])*/;
     }
 }
 

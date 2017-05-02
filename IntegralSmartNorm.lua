@@ -426,6 +426,7 @@ do
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
             for inPlaneIdx = 1,input:size(1) do
+                assert(self.outputNonNorm:stride(1) == self.w * self.h) -- for C function safety
                 assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
                 cv.integral{input[inPlaneIdx]:float(), self.integralDouble[inPlaneIdx]}
