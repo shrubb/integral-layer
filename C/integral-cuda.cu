@@ -122,46 +122,46 @@ __global__ void forwardNoNormFracKernel(
 
         // -- xMax border
         +(intData[max(0,min(x+xMaxCurr+1,h))*(w+1) 
-            + max(0,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMaxCurr+1,h))*(w+1)
-            + max(0,min(y+yMinCurr,w))]
-        + intData[max(0,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr,w))]
+            + max(1,min(y+yMaxCurr,w))]
+        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            + max(1,min(y+yMaxCurr,w))]
+        - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
+            + max(0,min(y+yMinCurr,w-1))]
+        + intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            + max(0,min(y+yMinCurr,w-1))]
         ) * xMaxCurrFrac
 
         // -- yMax border
-        +(intData[max(0,min(x+xMaxCurr,h))*(w+1) 
-            + max(0,min(y+yMaxCurr+1,w))]
-        - intData[max(0,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr,h))*(w+1)
-            + max(0,min(y+yMaxCurr+1,w))]
-        + intData[max(0,min(x+xMinCurr,h))*(w+1)
-            + max(0,min(y+yMaxCurr,w))]
+        +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+            + max(1,min(y+yMaxCurr+1,w))]
+        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            + max(1,min(y+yMaxCurr,w))]
+        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            + max(1,min(y+yMaxCurr+1,w))]
+        + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            + max(1,min(y+yMaxCurr,w))]
         ) * yMaxCurrFrac
 
         // -- xMin border
-        +(intData[max(0,min(x+xMinCurr,h))*(w+1) 
-            + max(0,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr-1,h))*(w+1)
-            + max(0,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr,w))]
-        + intData[max(0,min(x+xMinCurr-1,h))*(w+1)
-            + max(0,min(y+yMinCurr,w))]
+        +(intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
+            + max(1,min(y+yMaxCurr,w))]
+        - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+            + max(1,min(y+yMaxCurr,w))]
+        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            + max(0,min(y+yMinCurr,w-1))]
+        + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+            + max(0,min(y+yMinCurr,w-1))]
         ) * xMinCurrFrac
 
         // -- yMin border
-        +(intData[max(0,min(x+xMaxCurr,h))*(w+1) 
-            + max(0,min(y+yMinCurr,w))]
-        - intData[max(0,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr-1,w))]
-        - intData[max(0,min(x+xMinCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr,w))]
-        + intData[max(0,min(x+xMinCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr-1,w))]
+        +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+            + max(0,min(y+yMinCurr,w-1))]
+        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            + max(0,min(y+yMinCurr-1,w-1))]
+        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            + max(0,min(y+yMinCurr,w-1))]
+        + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            + max(0,min(y+yMinCurr-1,w-1))]
         ) * yMinCurrFrac
 
         // -- corner pixels

@@ -98,7 +98,7 @@ do
         self.gradInput = torch.FloatTensor()
 
         -- dirty fix (see dirtyFixWindows()) parameters
-        self.maxX, self.maxY = 64, 64 -- Stanford Background settings
+        self.maxX, self.maxY = 1e9, 1e9
 
         self.exact = false
         self.smart = true
