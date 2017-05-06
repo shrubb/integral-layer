@@ -20,6 +20,10 @@ do
         torch.save(path, self.h)
     end
     
+    function WindowDebugger:load(path)
+        self.h = torch.load(path)
+    end
+
     function WindowDebugger:add(intModule)
         self.h.xMin[#self.h.xMin+1] = intModule.xMin:float():clone()
         self.h.xMax[#self.h.xMax+1] = intModule.xMax:float():clone()
