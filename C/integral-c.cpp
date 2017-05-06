@@ -180,7 +180,7 @@ void forwardNoNormFrac(
                 + intData[t*(w+1) + l])
 
             // -- xMax border
-            +(intData[max(0,min(x+xMaxCurr+1,h))*(w+1) 
+            +(intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
                 + max(1,min(y+yMaxCurr,w))]
             - intData[max(1,min(x+xMaxCurr,h))*(w+1)
                 + max(1,min(y+yMaxCurr,w))]
@@ -248,8 +248,54 @@ void forwardNoNormFrac(
                     x+xMinCurr-1 < 0   or
                     y+yMinCurr-1 < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
 
-            // if (std::abs(outData[x*w + y]) < 1e-3f) {
-            //     outData[x*w + y] = 0;
+            // if (x == 0 and y == 1) {
+            //     std::cout << "outData[" << x << "," << y << "] = " << std::endl <<
+            //     "+intData[" << b << "," << r << "] = " << intData[b*(w+1) + r] << std::endl <<
+            //     "-intData[" << t << "," << r << "] = " << intData[t*(w+1) + r] << std::endl <<
+            //     "-intData[" << b << "," << l << "] = " << intData[b*(w+1) + l] << std::endl <<
+            //     "+intData[" << t << "," << l << "] = " << intData[t*(w+1) + l] << std::endl <<
+
+            //     "+" << (intData[max(0,min(x+xMaxCurr+1,h))*(w+1) 
+            //     + max(1,min(y+yMaxCurr,w))]
+            // - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            //     + max(1,min(y+yMaxCurr,w))]
+            // - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // + intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // ) << " * " << xMaxCurrFrac << std::endl <<
+
+            //     "+" << (intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+            //     + max(1,min(y+yMaxCurr+1,w))]
+            // - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            //     + max(1,min(y+yMaxCurr,w))]
+            // - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            //     + max(1,min(y+yMaxCurr+1,w))]
+            // + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            //     + max(1,min(y+yMaxCurr,w))]
+            // ) << " * " << yMaxCurrFrac << std::endl <<
+
+            //     "+" << (intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
+            //     + max(1,min(y+yMaxCurr,w))]
+            // - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+            //     + max(1,min(y+yMaxCurr,w))]
+            // - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // ) << " * " << xMinCurrFrac << std::endl <<
+
+            //     "+" << (intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+            //     + max(0,min(y+yMinCurr-1,w-1))]
+            // - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            //     + max(0,min(y+yMinCurr,w-1))]
+            // + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+            //     + max(0,min(y+yMinCurr-1,w-1))]
+            // ) << " * " << yMinCurrFrac << std::endl <<
+
+            //     "= " << outData[x*w + y] << std::endl;
             // }
         }
     }                            

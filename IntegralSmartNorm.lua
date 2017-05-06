@@ -36,7 +36,7 @@ void forwardCudaNoNorm(
 void forwardCudaNoNormFrac(
     float *intData, int h, int w, int nWindows, float *outData,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideChannel, int inDataStrideRow);
+    float *inData, int inDataStride);
 
 void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
@@ -46,12 +46,15 @@ void backwardCudaSingleFrac(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
     float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride); ]]
+    float *inData, int inDataStride);
+
+void _initCublasHandle(); ]]
 
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
-    CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+    CUDA_lib = ffi.load('C/lib/libintegral-cuda-test.so')
+    CUDA_lib._initCublasHandle();
 end
 
 do
@@ -400,12 +403,12 @@ do
             
             if self.exact then
                 -- TODO get rid of `ones`
-                local ones = torch.ones(self.nWindows, self.h, self.w):cuda()
+                local ones = torch.ones(self.h, self.w):cuda()
                 CUDA_lib.forwardCudaNoNormFrac(
                     intData, self.h, self.w, self.nWindows, outData, 
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax),
-                    torch.data(ones), ones:stride(1), ones:stride(2))
+                    torch.data(ones), ones:stride(1))
             else
                 CUDA_lib.forwardCudaNoNorm(
                     intData, self.h, self.w, self.nWindows, outData, 
@@ -442,7 +445,7 @@ do
                         intData, self.h, self.w, self.nWindows, outData, 
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input), input:stride(1), input:stride(2))
+                        torch.data(input[inPlaneIdx]), input:stride(2))
                 else
                     CUDA_lib.forwardCudaNoNorm(
                         intData, self.h, self.w, self.nWindows, outData, 
@@ -627,7 +630,7 @@ do
                     end
 
                     -- deltas of dOut(x,y) (sum over one window)
-                    local deltas = torch.FloatTensor(4)
+                    local deltas = torch.CudaTensor(4)
                     
                     if self.exact then
                         local inData, inStride
