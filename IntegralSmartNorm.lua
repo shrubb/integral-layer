@@ -53,7 +53,7 @@ void _initCublasHandle(); ]]
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
-    CUDA_lib = ffi.load('C/lib/libintegral-cuda-test.so')
+    CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
     CUDA_lib._initCublasHandle();
 end
 
