@@ -72,7 +72,7 @@ do
         parent.__init(self)
         self.nWindows, self.h, self.w = nWindows, h, w
         
-        self.outputNonNorm = torch.FloatTensor(nWindows, h, w)
+        self.outputNonNorm = torch.FloatTensor()
         
         self.integralDouble = torch.DoubleTensor()
         self.integral = torch.FloatTensor()
@@ -91,8 +91,9 @@ do
 
         -- for smart normalization
         -- TODO efficient memory usage
+        self.ones = torch.ones(self.h, self.w)
         self.onesIntegral = cv.integral{torch.ones(h, w)}:float()
-        self.outputOnes = torch.FloatTensor(nWindows, h, w)
+        self.outputOnes = torch.FloatTensor(self.nWindows, self.h, self.w)
         self.cdiv = nn.CDivTable()
         
         self:float() -- set self.updateOutput, self.accGradParameters and self._type
@@ -150,7 +151,7 @@ do
         for _,param in ipairs{
                 'outputNonNorm', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
                 'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax', 'onesIntegral',
-                'outputOnes', 'cdiv'} do
+                'ones', 'outputOnes', 'cdiv'} do
             self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
         end
         -- print('up')
@@ -249,6 +250,14 @@ do
         end
     end
 
+    local function flattenFirstDims(self, tensor)
+        return tensor:view(-1, self.h, self.w)
+    end
+
+    local function splitFirstDim(self, tensor)
+        return tensor:view(-1, self.nWindows, self.h, self.w)
+    end
+
     function updateOutputCPU(self, input)
         dirtyFixWindows(self)
 
@@ -257,8 +266,6 @@ do
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
-
-        self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size())
@@ -268,8 +275,6 @@ do
             -- we put the result in the first plane
             local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
             assert(self.outputOnes:stride(2) == self.w) -- for C function safety
-
-            self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
             local ones
             if self.exact then
@@ -313,14 +318,15 @@ do
             -- (no need to do it anymore, I hope?)
 
             -- then copy this result to all other output planes
-            for inPlaneIdx = 2,input:size(1) do
-                local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-                self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
-            end
+            -- for inPlaneIdx = 2,input:size(1) do
+            --     local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
+            --     self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
+            -- end
         end
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
+            self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
             assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
             for inPlaneIdx = 1,input:size(1) do
@@ -364,8 +370,13 @@ do
         end
 
         if self.smart then
+            local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
+            local outputOnes4D = 
+                nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
+
             -- divide elementwise to get normalized box filter maps
-            self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+            self.output = self.cdiv:forward {outputNonNorm4D, outputOnes4D}
+            self.output = flattenFirstDims(self, self.output)
         else
             self.output = self.outputNonNorm
         end
@@ -383,8 +394,6 @@ do
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
-
-        self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
         
         self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
         self.integral:resize(self.integralDouble:size()) -- not used here
@@ -393,10 +402,8 @@ do
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.smart then
             -- we put the result in the first plane
-            local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
+            -- local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
             assert(self.outputOnes:stride(2) == self.w) -- for C function safety
-
-            self.outputOnes:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
             local outData = torch.data(self.outputOnes)
             local intData = torch.data(self.onesIntegral)
@@ -420,15 +427,17 @@ do
             -- (no need to do it anymore, I hope?)
 
             -- copy this result to all other output planes
-            for inPlaneIdx = 2,input:size(1) do
-                local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-                self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
-            end
+            -- for inPlaneIdx = 2,input:size(1) do
+            --     local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
+            --     self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
+            -- end
         end
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
             for inPlaneIdx = 1,input:size(1) do
+                self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+
                 assert(self.outputNonNorm:stride(1) == self.w * self.h) -- for C function safety
                 assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
@@ -456,8 +465,13 @@ do
         end
 
         if self.smart then
+            local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
+            local outputOnes4D = 
+                nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
+            
             -- divide elementwise to get normalized box filter maps
-            self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
+            self.output = self.cdiv:forward {outputNonNorm4D, outputOnes4D}
+            self.output = flattenFirstDims(self, self.output)
         else
             self.output = self.outputNonNorm
         end
@@ -472,10 +486,16 @@ do
 
             if self.smart then
                 if not self._backwardDone then
-                    self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
+                    local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
+                    local outputOnes4D = 
+                        nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
+
+                    self.cdiv:updateGradInput(
+                        {outputNonNorm4D, outputOnes4D},
+                        splitFirstDim(self, gradOutput))
                     self._backwardDone = true
                 end
-                gradOutput = self.cdiv.gradInput[1]
+                gradOutput = flattenFirstDims(self, self.cdiv.gradInput[1])
             end
             
             if input:nDimension() == 2 then
@@ -512,7 +532,13 @@ do
 
         if self.smart then
             if not self._backwardDone then
-                self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
+                local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
+                local outputOnes4D = 
+                    nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
+
+                self.cdiv:updateGradInput(
+                    {outputNonNorm4D, outputOnes4D},
+                    splitFirstDim(self, gradOutput))
                 self._backwardDone = true
             end
         end
@@ -524,13 +550,8 @@ do
         for k = 1,(self.smart and 2 or 1) do
             -- iteration 1: gradient by outputNonNorm
             -- iteration 2: gradient by outputOnes
-            local gradOutput = self.smart and self.cdiv.gradInput[k] or gradOutput
+            local gradOutput = self.smart and flattenFirstDims(self, self.cdiv.gradInput[k]) or gradOutput
             assert(gradOutput:stride(2) == self.w) -- for C function
-
-            local ones
-            if self.smart and self.exact then
-                ones = torch.ones(self.h, self.w)
-            end
 
             for inPlaneIdx = 1,input:size(1) do
                 for nWindow = 1,self.nWindows do
@@ -558,8 +579,8 @@ do
                             inData = torch.data(input[inPlaneIdx])
                             inStride = input:stride(2)
                         else -- k == 2
-                            inData = torch.data(ones)
-                            inStride = ones:stride(1)
+                            inData = torch.data(self.ones)
+                            inStride = self.ones:stride(1)
                         end
                         
                         C_lib.backwardNoNormFrac(
@@ -589,7 +610,13 @@ do
 
         if self.smart then
             if not self._backwardDone then
-                self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
+                local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
+                local outputOnes4D = 
+                    nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
+
+                self.cdiv:updateGradInput(
+                    {outputNonNorm4D, outputOnes4D},
+                    splitFirstDim(self, gradOutput))
                 self._backwardDone = true
             end
         end
@@ -598,19 +625,11 @@ do
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
 
-        -- we have `self.integralCuda`
-        -- self.integral:copy(self.integralDouble) -- cast; TEMPORARY
-
         for k = 1,(self.smart and 2 or 1) do
             -- iteration 1: gradient by outputNonNorm
             -- iteration 2: gradient by outputOnes
-            local gradOutput = self.smart and self.cdiv.gradInput[k] or gradOutput
-            assert(gradOutput:stride(2) == self.w) -- for C function
-
-            local ones
-            if self.smart and self.exact then
-                ones = torch.ones(self.h, self.w):cuda()
-            end
+            local gradOutput = self.smart and flattenFirstDims(self, self.cdiv.gradInput[k]) or gradOutput
+            assert(gradOutput:stride(2) == self.w) -- for C function safety
 
             for inPlaneIdx = 1,input:size(1) do
                 for nWindow = 1,self.nWindows do
@@ -638,8 +657,8 @@ do
                             inData = torch.data(input[inPlaneIdx])
                             inStride = input:stride(2)
                         else -- k == 2
-                            inData = torch.data(ones)
-                            inStride = ones:stride(1)
+                            inData = torch.data(self.ones)
+                            inStride = self.ones:stride(1)
                         end
 
                         CUDA_lib.backwardCudaSingleFrac(

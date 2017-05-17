@@ -7,6 +7,34 @@ require 'cv.imgproc'
 
 local cityscapes = {}
 
+cityscapes.mean = torch.FloatTensor{0.28470638394356, 0.32577008008957, 0.28766867518425}
+cityscapes.std  = torch.FloatTensor{0.18671783804893, 0.1899059265852,  0.18665011227131}
+cityscapes.dsize = {512, 256}
+cityscapes.nClasses = 19
+-- precomputed class frequencies
+cityscapes.classProbs = torch.FloatTensor {
+    0.36869695782661,
+    0.060849856585264,
+    0.22824048995972,
+    0.0065539856441319,
+    0.0087727159261703  
+    0.012273414991796,
+    0.0020779478363693,
+    0.0055127013474703,
+    0.1592865139246,
+    0.011578181758523,
+    0.040189824998379,
+    0.012189572677016,
+    0.0013512192526832,
+    0.069945447146893,
+    0.0026745572686195,
+    0.0023519159294665,
+    0.0023290426470339,
+    0.00098657899070531,
+    0.0041390685364604,
+}
+cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
+
 function cityscapes.loadNames(kind) -- `kind` is 'train' or 'val'
     --[[ returns:
         {
@@ -64,18 +92,19 @@ function cityscapes.calcStd(files, mean)
     return retval:div(#files):sqrt()
 end
 
-cityscapes.mean = torch.FloatTensor{0.28470638394356, 0.32577008008957, 0.28766867518425}
-cityscapes.std  = torch.FloatTensor{0.18671783804893, 0.1899059265852,  0.18665011227131}
-
 -- Time for loading 1 picture:
 -- OpenCV: 0.1926669716835 seconds
 -- Torch : 0.15436439037323 seconds
 function cityscapes.loadSample(files)
     local imagePath  = cityscapes.relative .. 'leftImg8bit/' .. files.image
     local labelsPath = cityscapes.relative .. 'gtFine/' .. files.labels
-    
+
     -- load image
-    local img = image.loadPNG(imagePath)
+    local img = cv.imread{imagePath, cv.IMREAD_COLOR}
+    cv.cvtColor{img, img, cv.COLOR_BGR2RGB}
+    img = cv.resize{img, cityscapes.dsize, interpolation=cv.INTER_CUBIC}
+    img = img:float():div(255):permute(3,1,2):clone()
+
     -- normalize image globally
     for ch = 1,3 do
         img[ch]:add(-cityscapes.mean[ch])
@@ -84,7 +113,8 @@ function cityscapes.loadSample(files)
 
     -- load labels
     local labelsOriginal = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
-    local labelsTorch    = torch.ByteTensor(labelsOriginal:size()):fill(255)
+    labelsOriginal = cv.resize{labelsOriginal, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+    local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
     -- shift labels according to
     -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
     local classMap = {
@@ -126,9 +156,11 @@ for label, color in ipairs(labelToColor) do
     end
 end
 
+require 'nn'
+
 function cityscapes.renderLabels(labels, img, blendCoeff)
     
-    local retval = torch.FloatTensor(3, 1024, 2048):zero()
+    local retval = torch.FloatTensor(3, cityscapes.dsize[2], cityscapes.dsize[1]):zero()
     for label, color in ipairs(labelToColor) do
         local mask = nn.utils.addSingletonDimension(labels:eq(label))
         for ch = 1,3 do
@@ -148,6 +180,24 @@ function cityscapes.renderLabels(labels, img, blendCoeff)
     end
     
     return retval
+end
+
+function cityscapes.calcClassProbs(trainFiles)
+    local counts = torch.DoubleTensor(19):zero()
+
+    local classMap = {
+        7, 8, 11, 12, 13, 17, 19, 20, 21, 
+        22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
+    for i, files in ipairs(trainFiles) do
+        local labelsPath = cityscapes.relative .. 'gtFine/' .. files.labels
+        local labels = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
+        for classTorch, classOrigin in ipairs(classMap) do
+            counts[classTorch] = counts[classTorch] + labels:eq(classOrigin):sum()
+        end
+        if i % 100 == 0 then print(i); collectgarbage() end
+    end
+
+    return counts:div(counts:sum()):float()
 end
 
 return cityscapes
