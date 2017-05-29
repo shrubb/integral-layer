@@ -17,7 +17,7 @@ cityscapes.classProbs = torch.FloatTensor {
     0.060849856585264,
     0.22824048995972,
     0.0065539856441319,
-    0.0087727159261703  
+    0.0087727159261703,
     0.012273414991796,
     0.0020779478363693,
     0.0055127013474703,
@@ -198,6 +198,20 @@ function cityscapes.calcClassProbs(trainFiles)
     end
 
     return counts:div(counts:sum()):float()
+end
+
+function cityscapes.labelsToEval(labels)
+    local retval = torch.ByteTensor(cityscapes.dsize[2], cityscapes.dsize[1])
+
+    local classMap = {
+        7, 8, 11, 12, 13, 17, 19, 20, 21,
+        22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
+    for torchClass, evalClass in pairs(classMap) do
+        retval[labels:eq(torchClass)] = evalClass
+        -- print('Setting ' .. evalClass)
+    end
+
+    return retval
 end
 
 return cityscapes
