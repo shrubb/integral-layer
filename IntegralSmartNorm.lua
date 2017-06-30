@@ -230,21 +230,37 @@ do
             self['y' .. borderKind]:clamp(-self.maxY, self.maxY)
         end
 
-        -- dirty fix: don't let windows become thinner than 1px
-        for i = 1,self.nWindows do
-            if self.xMin[i] > self.xMax[i] then
-                if math.abs(self.xMin[i]) > math.abs(self.xMax[i]) then
-                    self.xMax[i] = self.xMin[i] + 0.5
-                else
-                    self.xMin[i] = self.xMax[i] - 0.5
+        -- dirty fix: don't let windows become thinner than 1px (or 2.1 px, if in non-exact mode)
+        if self.exact then
+            for i = 1,self.nWindows do
+                if self.xMin[i] > self.xMax[i] then
+                    if math.abs(self.xMin[i]) > math.abs(self.xMax[i]) then
+                        self.xMax[i] = self.xMin[i] + 0.5
+                    else
+                        self.xMin[i] = self.xMax[i] - 0.5
+                    end
+                end
+
+                if self.yMin[i] > self.yMax[i] then
+                    if math.abs(self.yMin[i]) > math.abs(self.yMax[i]) then
+                        self.yMax[i] = self.yMin[i] + 0.5
+                    else
+                        self.yMin[i] = self.yMax[i] - 0.5
+                    end
                 end
             end
+        else
+            for i = 1,self.nWindows do
+                if self.xMin[i] > self.xMax[i] + 1.1 then
+                    local mean = 0.5 * (self.xMin[i] + self.xMax[i])
+                    self.xMin[i] = mean - 0.55
+                    self.xMax[i] = mean + 0.55
+                end
 
-            if self.yMin[i] > self.yMax[i] then
-                if math.abs(self.yMin[i]) > math.abs(self.yMax[i]) then
-                    self.yMax[i] = self.yMin[i] + 0.5
-                else
-                    self.yMin[i] = self.yMax[i] - 0.5
+                if self.yMin[i] > self.yMax[i] + 1.1 then
+                    local mean = 0.5 * (self.yMin[i] + self.yMax[i])
+                    self.yMin[i] = mean - 0.55
+                    self.yMax[i] = mean + 0.55
                 end
             end
         end
