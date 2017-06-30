@@ -27,6 +27,74 @@ void _initCublasHandle() {
     // TODO: at shutdown, `cublasDestroy(handle);`
 }
 
+/************************ Integral image computation ************************/
+
+__global__ void accumulateRowsKernel(
+    float *input, float *output, int channels, int totalRows, int w);
+__global__ void accumulateColsKernel(
+    float *input, int channels, int h, int w);
+
+extern "C"
+void integralImageCuda(float *input, float *output, int channels, int h, int w) {
+    int totalRows = channels * h;
+    int totalCols = channels * w;
+
+    int blockSize1D, gridSize1D;
+
+    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
+    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
+    accumulateRowsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, totalRows, w);
+
+    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
+    gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
+    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
+}
+
+__global__ void accumulateRowsKernel(
+    float *input, float *output, int channels, int totalRows, int w) {
+    // view multichannel image as a multiline single-channel image
+    int globalRowIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+
+    if (globalRowIdx < totalRows) {
+        float *outputRow = output + (globalRowIdx + globalRowIdx / channels + 1) * (w+1) + 1;
+        outputRow[-1] = 0;
+
+        double sum = 0;
+        for (int i = 0; i < w; ++i) {
+            sum += input[globalRowIdx * w + i];
+            outputRow[i] = static_cast<float>(sum);
+        }
+
+        // need to zero the (0,0) corner of the output separately >:(
+        output[(globalRowIdx - globalRowIdx % h + globalRowIdx / channels) * (w+1)];
+    }
+}
+
+__global__ void accumulateColsKernel(float *input, int channels, int h, int w) {
+    // in-place.
+    // input is already a `channels * (h+1) * (w+1)` array
+
+    // global column index (of all `channels * w` columns in this image)
+    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+
+    if (colIdx < channels * w) {
+        input += (colIdx / w) * (h+1) * (w+1); // jump to current channel
+        colIdx %= w; // switch to local column index,
+        ++colIdx;    // it's 1-indexed because first output column is always zero
+
+        input[colIdx] = 0; // first element of every column is always zero
+        double sum = 0;
+
+        for (int i = 1; i <= h; ++i) {
+            float *currentElement = &input[i * (w+1) + colIdx];
+            sum += *currentElement;
+            *currentElement = sum;
+        }
+    }
+}
+
+/************************ Box filters ************************/
+
 __global__ void forwardKernel(
     float *intData, float *outData, int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
