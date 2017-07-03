@@ -5,7 +5,9 @@
 #include <cmath>
 
 #include <cuda_runtime.h>
-#include "cublas_v2.h"
+#include <cublas_v2.h>
+
+#include "inplace/transpose.h"
 
 #define BLOCK_SIZE 32
 #define BLOCK_CHANNELS (1024 / (BLOCK_SIZE * BLOCK_SIZE))
@@ -22,7 +24,7 @@ void _initCublasHandle() {
     if (cublasCreate(&cublasHandle) != CUBLAS_STATUS_SUCCESS) {
         printf ("CUBLAS initialization failed\n");
     }
-    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
+    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_HOST);
 
     // TODO: at shutdown, `cublasDestroy(handle);`
 }
@@ -32,31 +34,46 @@ void _initCublasHandle() {
 __global__ void accumulateRowsKernel(
     float *input, float *output, int channels, int totalRows, int w);
 __global__ void accumulateColsKernel(
+    float *input, float *output, int channels, int h, int w);
+__global__ void accumulateColsInplaceKernel(
+    float *input, int channels, int h, int w);
+__global__ void accumulateColsInplaceTransposedKernel(
     float *input, int channels, int h, int w);
 
 extern "C"
 void integralImageCuda(float *input, float *output, int channels, int h, int w) {
-    int totalRows = channels * h;
-    int totalCols = channels * w;
-
     int blockSize1D, gridSize1D;
 
-    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
-    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
-    accumulateRowsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, totalRows, w);
-
+    int totalCols = channels * w;
     blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
     gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
-    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
+    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
+
+    inplace::transpose(true, output, channels * (h+1), w+1);
+
+    int totalRows = channels * h;
+    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
+    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
+    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
+
+    inplace::transpose(true, output, w+1, channels * (h+1));
+
+    // const float alpha = 1.0, beta = 0.0;
+    // A: (channels * h) x (w)
+    // cublasSgeam(
+    //     cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, w, channels * h,
+    //     &alpha, input, channels * h,
+    //     &beta, input, channels * h,
+    //     output, w);
 }
 
 __global__ void accumulateRowsKernel(
-    float *input, float *output, int channels, int totalRows, int w) {
+    float *input, float *output, int channels, int h, int w) {
     // view multichannel image as a multiline single-channel image
     int globalRowIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
 
-    if (globalRowIdx < totalRows) {
-        float *outputRow = output + (globalRowIdx + globalRowIdx / channels + 1) * (w+1) + 1;
+    if (globalRowIdx < channels * h) {
+        float *outputRow = output + (globalRowIdx + globalRowIdx / h + 1) * (w+1) + 1;
         outputRow[-1] = 0;
 
         double sum = 0;
@@ -66,13 +83,59 @@ __global__ void accumulateRowsKernel(
         }
 
         // need to zero the (0,0) corner of the output separately >:(
-        output[(globalRowIdx - globalRowIdx % h + globalRowIdx / channels) * (w+1)];
+        output[(globalRowIdx / h) * (w+1) * (h+1)] = 0;
     }
 }
 
-__global__ void accumulateColsKernel(float *input, int channels, int h, int w) {
+__global__ void accumulateColsKernel(float *input, float *output, int channels, int h, int w) {
+    // global column index (of all `channels * w` columns in this image)
+    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+
+    if (colIdx < channels * w) {
+        // jump to current channel
+        input  += (colIdx / w) * h * w;
+        output += (colIdx / w) * (h+1) * (w+1);
+        colIdx %= w; // switch to local column index,
+        ++colIdx;    // it's 1-indexed because first output column is always zero
+
+        output[colIdx] = 0; // first element of every column is always zero
+        double sum = 0;
+
+        for (int i = 1; i <= h; ++i) {
+            sum += input[(i-1) * w + colIdx - 1];
+            output[i * (w+1) + colIdx] = sum;
+        }
+    }
+}
+
+__global__ void accumulateColsInplaceTransposedKernel(float *input, int channels, int h, int w) {
     // in-place.
-    // input is already a `channels * (h+1) * (w+1)` array
+    // input is a `(w+1) x channels * (h+1)` array
+
+    // global column index (of all `channels * w` columns in this image)
+    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+
+    if (colIdx < channels * h) {
+        // need to zero the (0,0) corner of the output separately >:(
+        input[(colIdx / h) * (h+1)] = 0;
+
+        colIdx += colIdx / h + 1; // make `colIdx` the (h+1)-array indexer
+
+        input[colIdx] = 0; // first element of every column is always zero
+
+        double sum = 0;
+
+        for (int i = 1; i <= w; ++i) {
+            float *currentElement = &input[i * channels * (h+1) + colIdx];
+            sum += *currentElement;
+            *currentElement = sum;
+        }
+    }
+}
+
+__global__ void accumulateColsInplaceKernel(float *input, int channels, int h, int w) {
+    // in-place.
+    // input is already a `channels * (h+1) x (w+1)` array
 
     // global column index (of all `channels * w` columns in this image)
     int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
