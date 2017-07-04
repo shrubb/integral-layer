@@ -49,6 +49,7 @@ void backwardCudaSingleFrac(
     float *inData, int inDataStride);
 
 void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
+void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
 
 void _initCublasHandle(); ]]
 
@@ -57,13 +58,6 @@ local CUDA_lib
 if pcall(require, 'cutorch') then
     CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
     CUDA_lib._initCublasHandle();
-end
-
-function integralCUDA(input, output, tmp)
-    CUDA_lib.integralImageCuda(
-        torch.data(input), torch.data(output),
-        input:size(1), input:size(2), input:size(3),
-        torch.data(tmp))
 end
 
 do
@@ -419,10 +413,7 @@ do
         end
         
         assert(input:size(2) == self.h and input:size(3) == self.w)
-        
-        self.integralDouble:resize(input:size(1), input:size(2)+1, input:size(3)+1)
-        self.integral:resize(self.integralDouble:size()) -- not used here
-        self.integralCuda:resize(self.integralDouble:size())
+        self.integralCuda:resize(input:size(1), input:size(2)+1, input:size(3)+1)
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.smart then
@@ -460,15 +451,21 @@ do
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
+            if self.tmpArrayGPU:nElement() < self.integralCuda:nElement() then
+                self.tmpArrayGPU:resize(self.integralCuda:nElement())
+            end
+
+            CUDA_lib.integralImageCuda(
+                torch.data(input), torch.data(self.integralCuda),
+                input:size(1), input:size(2), input:size(3),
+                torch.data(self.tmpArrayGPU))
+
             for inPlaneIdx = 1,input:size(1) do
                 self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
 
                 assert(self.outputNonNorm:stride(1) == self.w * self.h) -- for C function safety
                 assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
-                cv.integral{input[inPlaneIdx]:float(), self.integralDouble[inPlaneIdx]}
-                self.integralCuda[inPlaneIdx]:copy(self.integralDouble[inPlaneIdx]) -- cast and copy to GPU
-                
                 local outPlaneIdx = 1 + self.nWindows*(inPlaneIdx-1)
 
                 local intData = torch.data(self.integralCuda[inPlaneIdx])

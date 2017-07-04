@@ -59,7 +59,6 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
         &alpha, output, w+1,
         &beta, tmp, channels * (h+1),
         tmp, channels * (h+1));
-    // inplace::transpose(true, output, channels * (h+1), w+1);
 
     int totalRows = channels * h;
     blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
@@ -71,7 +70,25 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
         &alpha, tmp, channels * (h+1),
         &beta, output, w+1,
         output, w+1);
-    // inplace::transpose(true, output, w+1, channels * (h+1));
+}
+
+extern "C"
+void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w) {
+    int blockSize1D, gridSize1D;
+
+    int totalCols = channels * w;
+    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
+    gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
+    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
+
+    inplace::transpose(true, output, channels * (h+1), w+1);
+
+    int totalRows = channels * h;
+    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
+    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
+    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
+
+    inplace::transpose(true, output, w+1, channels * (h+1));
 }
 
 __global__ void accumulateRowsKernel(
@@ -109,8 +126,8 @@ __global__ void accumulateColsKernel(float *input, float *output, int channels, 
         double sum = 0;
 
         for (int i = 1; i <= h; ++i) {
-            sum += input[(i-1) * w + colIdx - 1];
-            output[i * (w+1) + colIdx] = sum;
+            sum += static_cast<double>(input[(i-1) * w + colIdx - 1]);
+            output[i * (w+1) + colIdx] = static_cast<float>(sum);
         }
     }
 }
@@ -134,8 +151,8 @@ __global__ void accumulateColsInplaceTransposedKernel(float *input, int channels
 
         for (int i = 1; i <= w; ++i) {
             float *currentElement = &input[i * channels * (h+1) + colIdx];
-            sum += *currentElement;
-            *currentElement = sum;
+            sum += static_cast<double>(*currentElement);
+            *currentElement = static_cast<float>(sum);
         }
     }
 }
@@ -157,8 +174,8 @@ __global__ void accumulateColsInplaceKernel(float *input, int channels, int h, i
 
         for (int i = 1; i <= h; ++i) {
             float *currentElement = &input[i * (w+1) + colIdx];
-            sum += *currentElement;
-            *currentElement = sum;
+            sum += static_cast<double>(*currentElement);
+            *currentElement = static_cast<float>(sum);
         }
     }
 }
