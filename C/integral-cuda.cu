@@ -18,15 +18,21 @@ using std::floor;
 using std::ceil;
 
 cublasHandle_t cublasHandle;
+float *CUDA_ZERO_FLOAT, *CUDA_ONE_FLOAT; // for cublas in device pointer mode
 
 extern "C"
 void _initCublasHandle() {
     if (cublasCreate(&cublasHandle) != CUBLAS_STATUS_SUCCESS) {
         printf ("CUBLAS initialization failed\n");
     }
-    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_HOST);
-
+    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
     // TODO: at shutdown, `cublasDestroy(handle);`
+
+    // TODO: deallocate this!
+    float zeroOne[] = {0, 1};
+    cudaMalloc((void**)&CUDA_ZERO_FLOAT, sizeof(zeroOne));
+    CUDA_ONE_FLOAT = CUDA_ZERO_FLOAT + 1;
+    cudaMemcpy(CUDA_ZERO_FLOAT, zeroOne, sizeof(zeroOne), cudaMemcpyHostToDevice);
 }
 
 /************************ Integral image computation ************************/
@@ -49,15 +55,14 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
     gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
     accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
 
-    const float alpha = 1.0, beta = 0.0;
     cublasSgeam(
         // cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, colsC, rowsC,
         // &alpha, A, colsA,
         // &beta, B, colsB,
         // C, colsC
         cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
-        &alpha, output, w+1,
-        &beta, tmp, channels * (h+1),
+        CUDA_ZERO_FLOAT, output, w+1,
+        CUDA_ONE_FLOAT, tmp, channels * (h+1),
         tmp, channels * (h+1));
 
     int totalRows = channels * h;
@@ -67,8 +72,8 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
 
     cublasSgeam(
         cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
-        &alpha, tmp, channels * (h+1),
-        &beta, output, w+1,
+        CUDA_ZERO_FLOAT, tmp, channels * (h+1),
+        CUDA_ONE_FLOAT, output, w+1,
         output, w+1);
 }
 
