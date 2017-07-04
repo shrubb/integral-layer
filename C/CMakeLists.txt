@@ -20,14 +20,13 @@ add_library(integral-c SHARED "integral-c.cpp")
 find_package(CUDA)
 
 if (CUDA_FOUND)
-    set(INPLACE_ROOT "/media/hpc4_Raid/e_burkov/Libraries/inplace")
+    set(INPLACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../extern/inplace")
 	include_directories(${INPLACE_ROOT})
+    add_library(inplace SHARED IMPORTED)
+    set_property(TARGET inplace PROPERTY IMPORTED_LOCATION "${INPLACE_ROOT}/inplace/lib/libinplace.so")
 	
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++11")
     cuda_add_library(integral-cuda SHARED "integral-cuda.cu")
     cuda_add_cublas_to_target(integral-cuda)
-
-    add_library(inplace SHARED IMPORTED)
-    set_property(TARGET inplace PROPERTY IMPORTED_LOCATION "${INPLACE_ROOT}/inplace/lib/libinplace.so")
     target_link_libraries(integral-cuda inplace)
 endif()

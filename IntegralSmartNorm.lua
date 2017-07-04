@@ -48,7 +48,7 @@ void backwardCudaSingleFrac(
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
     float *inData, int inDataStride);
 
-void integralImageCuda(float *input, float *output, int channels, int h, int w);
+void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
 
 void _initCublasHandle(); ]]
 
@@ -59,10 +59,11 @@ if pcall(require, 'cutorch') then
     CUDA_lib._initCublasHandle();
 end
 
-function integralCUDA(input, output)
+function integralCUDA(input, output, tmp)
     CUDA_lib.integralImageCuda(
         torch.data(input), torch.data(output),
-        input:size(1), input:size(2), input:size(3))
+        input:size(1), input:size(2), input:size(3),
+        torch.data(tmp))
 end
 
 do

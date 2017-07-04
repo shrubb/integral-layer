@@ -1,0 +1,4 @@
+[submodule "extern/inplace"]
+	path = extern/inplace
+	url = https://github.com/shrubb/inplace.git
+	branch = integral-layer
