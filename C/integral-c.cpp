@@ -48,32 +48,6 @@ void backward(
     float yMaxDelta = 0;
     float yMinDelta = 0;
 
-#if 0
-    std::cout << "gold tmpArray:" << std::endl;
-    for (int x = 1; x <= h; ++x) {
-        for (int y = 1; y <= w; ++y) {
-            
-            int tClip = max(x+xMinCurr, 0);
-            int bClip = min(x+xMaxCurr, h);
-            int lClip = max(y+yMinCurr, 0);
-            int rClip = min(y+yMaxCurr, w);
-
-            if (x >= 33 or y >= 33)
-            std::cout <<    
-        gradOutData[(x-1)*w + (y-1)] * ( intData[max(0,min(x+xMaxCurr+1,h))*(w+1) 
-            + max(0,rClip)]
-        - intData[max(0,bClip)*(w+1) 
-            + max(0,rClip)]
-        - intData[max(0,min(x+xMaxCurr+1,h))*(w+1)
-            + max(0,min(y+yMinCurr-1,w))]
-        + intData[max(0,bClip)*(w+1)
-            + max(0,min(y+yMinCurr-1,w))] ) << " ";
-        }
-        std::cout << std::endl;
-    }
-    std::cout << std::endl;
-#endif
-
     #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
     for (int x = 1; x <= h; ++x) {
         for (int y = 1; y <= w; ++y) {
@@ -129,7 +103,7 @@ void backward(
     deltas[2] = yMinDelta;
 }
 
-void forwardNoNorm(
+void forwardNoNormReplicate(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
 
@@ -154,8 +128,7 @@ void forwardNoNorm(
     }
 }
 
-// just for gradient debugging
-void forwardNoNormFrac(
+void forwardNoNormReplicateFrac(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
@@ -222,31 +195,31 @@ void forwardNoNormFrac(
             + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
                 + max(0,min(y+yMinCurr-1,w-1))]
             ) * yMinCurrFrac
-
+            
             // -- corner pixels
             + xMaxCurrFrac*yMaxCurrFrac * (
-                   (x+xMaxCurr > h-1 or
-                    y+yMaxCurr > w-1 or
-                    x+xMaxCurr < 0   or
-                    y+yMaxCurr < 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)])
+                   (x+xMaxCurr >  h-1 or
+                    y+yMaxCurr >  w-1 or
+                    x+xMaxCurr <= 0   or
+                    y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)])
 
             + xMinCurrFrac*yMaxCurrFrac * (
-                   (x+xMinCurr-1 > h-1 or
-                    y+yMaxCurr   > w-1 or
-                    x+xMinCurr-1 < 0   or
-                    y+yMaxCurr   < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)])
+                   (x+xMinCurr-1 >= h-1 or
+                    y+yMaxCurr   >  w-1 or
+                    x+xMinCurr-1 <  0   or
+                    y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)])
 
             + xMaxCurrFrac*yMinCurrFrac * (
-                   (x+xMaxCurr   > h-1 or
-                    y+yMinCurr-1 > w-1 or
-                    x+xMaxCurr   < 0   or
-                    y+yMinCurr-1 < 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)])
+                   (x+xMaxCurr   >  h-1 or
+                    y+yMinCurr-1 >= w-1 or
+                    x+xMaxCurr   <= 0   or
+                    y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)])
 
             + xMinCurrFrac*yMinCurrFrac * (
-                   (x+xMinCurr-1 > h-1 or
-                    y+yMinCurr-1 > w-1 or
-                    x+xMinCurr-1 < 0   or
-                    y+yMinCurr-1 < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
+                   (x+xMinCurr-1 >= h-1 or
+                    y+yMinCurr-1 >= w-1 or
+                    x+xMinCurr-1 <  0   or
+                    y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
 
             // if (x == 0 and y == 1) {
             //     std::cout << "outData[" << x << "," << y << "] = " << std::endl <<
@@ -295,10 +268,304 @@ void forwardNoNormFrac(
             //     + max(0,min(y+yMinCurr-1,w-1))]
             // ) << " * " << yMinCurrFrac << std::endl <<
 
+            // // -- corner pixels
+            // "+" << xMaxCurrFrac << " * " << yMaxCurrFrac << " * " << (
+            //        (x+xMaxCurr >  h-1 or
+            //         y+yMaxCurr >  w-1 or
+            //         x+xMaxCurr <= 0   or
+            //         y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)]) << std::endl <<
+
+            // "+" << xMinCurrFrac << " * " << yMaxCurrFrac << " * " << (
+            //        (x+xMinCurr-1 >= h-1 or
+            //         y+yMaxCurr   >  w-1 or
+            //         x+xMinCurr-1 <  0   or
+            //         y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)]) << std::endl <<
+
+            // "+" << xMaxCurrFrac << " * " << yMinCurrFrac << " * " << (
+            //        (x+xMaxCurr   >  h-1 or
+            //         y+yMinCurr-1 >= w-1 or
+            //         x+xMaxCurr   <= 0   or
+            //         y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)]) << std::endl <<
+
+            // "+" << xMinCurrFrac << " * " << yMinCurrFrac << " * " << (
+            //        (x+xMinCurr-1 >= h-1 or
+            //         y+yMinCurr-1 >= w-1 or
+            //         x+xMinCurr-1 <  0   or
+            //         y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]) << std::endl <<
+
             //     "= " << outData[x*w + y] << std::endl;
             // }
         }
     }                            
+}
+
+void forwardNoNorm(
+    float *intData, int h, int w, float *outData,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
+
+    int t, b, l, r;
+
+    #pragma omp parallel for private(t,b,l,r)
+    for (int x = 0; x < h; ++x) {
+        for (int y = 0; y < w; ++y) {
+
+            t = max(0, min(x+xMinCurr, h) );
+            b = max(0, min(x+xMaxCurr, h) );
+            l = max(0, min(y+yMinCurr, w) );
+            r = max(0, min(y+yMaxCurr, w) );
+
+            outData[x*w + y] = 
+                ( intData[b*(w+1) + r]
+                - intData[t*(w+1) + r]
+                - intData[b*(w+1) + l]
+                + intData[t*(w+1) + l]);
+        }
+    }
+}
+
+void forwardNoNormFrac(
+    float *intData, int h, int w, float *outData,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
+    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
+    float *inData, int inDataStride) {
+
+    int t, b, l, r;
+
+    #pragma omp parallel for private(t,b,l,r)
+    for (int x = 0; x < h; ++x) {
+        for (int y = 0; y < w; ++y) {
+
+            t = max(0, min(x+xMinCurr, h) );
+            b = max(0, min(x+xMaxCurr, h) );
+            l = max(0, min(y+yMinCurr, w) );
+            r = max(0, min(y+yMaxCurr, w) );
+
+            outData[x*w + y] = 
+                ( intData[b*(w+1) + r]
+                - intData[t*(w+1) + r]
+                - intData[b*(w+1) + l]
+                + intData[t*(w+1) + l])
+
+            // -- xMax border
+            +(intData[max(0,min(x+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            + intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            ) * xMaxCurrFrac
+
+            // -- yMax border
+            +(intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr+1,w))]
+            - intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr+1,w))]
+            + intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            ) * yMaxCurrFrac
+
+            // -- xMin border
+            +(intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr-1,h))*(w+1)
+                + max(0,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            + intData[max(0,min(x+xMinCurr-1,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            ) * xMinCurrFrac
+
+            // -- yMin border
+            +(intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            - intData[max(0,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr-1,w))]
+            - intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr,w))]
+            + intData[max(0,min(x+xMinCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr-1,w))]
+            ) * yMinCurrFrac
+
+            // -- corner pixels
+            + xMaxCurrFrac*yMaxCurrFrac * (
+                   (x+xMaxCurr > h-1 or
+                    y+yMaxCurr > w-1 or
+                    x+xMaxCurr < 0   or
+                    y+yMaxCurr < 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)])
+
+            + xMinCurrFrac*yMaxCurrFrac * (
+                   (x+xMinCurr-1 > h-1 or
+                    y+yMaxCurr   > w-1 or
+                    x+xMinCurr-1 < 0   or
+                    y+yMaxCurr   < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)])
+
+            + xMaxCurrFrac*yMinCurrFrac * (
+                   (x+xMaxCurr   > h-1 or
+                    y+yMinCurr-1 > w-1 or
+                    x+xMaxCurr   < 0   or
+                    y+yMinCurr-1 < 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)])
+
+            + xMinCurrFrac*yMinCurrFrac * (
+                   (x+xMinCurr-1 > h-1 or
+                    y+yMinCurr-1 > w-1 or
+                    x+xMinCurr-1 < 0   or
+                    y+yMinCurr-1 < 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
+        }
+    }
+}
+
+void updateGradInput(
+    float *gradOutputInt, int h, int w, float *outData,
+    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
+
+    int t, b, l, r;
+
+    #pragma omp parallel for private(t,b,l,r)
+    for (int x = 0; x < h; ++x) {
+        for (int y = 0; y < w; ++y) {
+
+            t = max(0, min(x+xMinCurr, h) );
+            b = max(0, min(x+xMaxCurr, h) );
+            l = max(0, min(y+yMinCurr, w) );
+            r = max(0, min(y+yMaxCurr, w) );
+
+            outData[x*w + y] = 
+                ( gradOutputInt[b*(w+1) + r]
+                - gradOutputInt[t*(w+1) + r]
+                - gradOutputInt[b*(w+1) + l]
+                + gradOutputInt[t*(w+1) + l]);
+        }
+    }
+}
+
+void updateGradInputFrac(
+    float *gradOutputInt, int channels, int h, int w, float *gradInput,
+    int *xMin, int *xMax, int *yMin, int *yMax,
+    float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
+    float *gradOutput, int gradOutputStride) {
+    int t, b, l, r;
+    int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
+
+    for (int ch = 0; ch < channels; ++ch) {
+
+        // #pragma omp parallel for private(t,b,l,r,xMinCurr,xMaxCurr,yMinCurr,yMaxCurr)
+        for (int x = 0; x < h; ++x) {
+            for (int y = 0; y < w; ++y) {
+
+                xMinCurr = (x == 0   and xMax[ch] >= 0 ? 0    : xMin[ch]);
+                xMaxCurr = (x == h-1 and xMin[ch] <= 0 ? h+66 : xMax[ch]);
+                yMinCurr = (y == 0   and yMax[ch] >= 0 ? 0    : yMin[ch]);
+                yMaxCurr = (y == w-1 and yMin[ch] <= 0 ? w+66 : yMax[ch]);
+
+                t = max(0, min(x+xMinCurr, h) );
+                b = max(0, min(x+xMaxCurr, h) );
+                l = max(0, min(y+yMinCurr, w) );
+                r = max(0, min(y+yMaxCurr, w) );
+
+                // if (x == 1 and y == 1) {
+                //     std::cout << "gradInput[x*w + y] += " << std::endl;
+                //     std::cout << "+ gradOutputInt[b*(w+1) + r] = " << gradOutputInt[b*(w+1) + r] << std::endl;
+                //     std::cout << "- gradOutputInt[t*(w+1) + r] = " << gradOutputInt[t*(w+1) + r] << std::endl;
+                //     std::cout << "- gradOutputInt[b*(w+1) + l] = " << gradOutputInt[b*(w+1) + l] << std::endl;
+                //     std::cout << "+ gradOutputInt[t*(w+1) + l] = " << gradOutputInt[t*(w+1) + l] << std::endl;
+
+                //     std::cout << "adding xMax border:" << std::endl;
+                //     std::cout << "+gradOutputInt[" << max(0,min(x+xMaxCurr+1,h)) << "," << max(0,min(y+yMaxCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr+1,h))*(w+1) + max(0,min(y+yMaxCurr,w))] << std::endl;
+                //     std::cout << "-gradOutputInt[" << max(0,min(x+xMaxCurr,h)) << "," << max(0,min(y+yMaxCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1) + max(0,min(y+yMaxCurr,w))] << std::endl;
+                //     std::cout << "-gradOutputInt[" << max(0,min(x+xMaxCurr+1,h)) << "," << max(0,min(y+yMinCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr+1,h))*(w+1) + max(0,min(y+yMinCurr,w))] << std::endl;
+                //     std::cout << "+gradOutputInt[" << max(0,min(x+xMaxCurr,h)) << "," << max(0,min(y+yMinCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1) + max(0,min(y+yMinCurr,w))] << std::endl;
+                //     std::cout << "* xMaxFrac[ch] = " << xMaxFrac[ch] << std::endl;
+                // }
+
+                gradInput[x*w + y] += 
+                    ( gradOutputInt[b*(w+1) + r]
+                    - gradOutputInt[t*(w+1) + r]
+                    - gradOutputInt[b*(w+1) + l]
+                    + gradOutputInt[t*(w+1) + l])
+                   
+                // -- xMax border
+                +(gradOutputInt[max(0,min(x+xMaxCurr+1,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputInt[(max(0,min(x+xMaxCurr+1,h)))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                + gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                ) * xMaxFrac[ch]
+
+                // -- yMax border
+                +(gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr+1,w))]
+                - gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr+1,w))]
+                + gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                ) * yMaxFrac[ch]
+
+                // -- xMin border
+                +(gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputInt[max(0,min(x+xMinCurr-1,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                + gradOutputInt[max(0,min(x+xMinCurr-1,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                ) * xMinFrac[ch]
+
+                // -- yMin border
+                +(gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                - gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr-1,w))]
+                - gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                + gradOutputInt[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr-1,w))]
+                ) * yMinFrac[ch]
+
+                // -- corner pixels
+                + xMaxFrac[ch]*yMaxFrac[ch] * (
+                       (x+xMaxCurr > h-1 or
+                        y+yMaxCurr > w-1 or
+                        x+xMaxCurr < 0   or
+                        y+yMaxCurr < 0) ? 0 : 
+                   gradOutput[(x+xMaxCurr)*gradOutputStride + (y+yMaxCurr)])
+
+                + xMinFrac[ch]*yMaxFrac[ch] * (
+                       (x+xMinCurr-1 > h-1 or
+                        y+yMaxCurr   > w-1 or
+                        x+xMinCurr-1 < 0   or
+                        y+yMaxCurr   < 0) ? 0 : 
+                   gradOutput[(x+xMinCurr-1)*gradOutputStride + (y+yMaxCurr)])
+
+                + xMaxFrac[ch]*yMinFrac[ch] * (
+                       (x+xMaxCurr   > h-1 or
+                        y+yMinCurr-1 > w-1 or
+                        x+xMaxCurr   < 0   or
+                        y+yMinCurr-1 < 0) ? 0 : 
+                   gradOutput[(x+xMaxCurr)*gradOutputStride + (y+yMinCurr-1)])
+
+                + xMinFrac[ch]*yMinFrac[ch] * (
+                       (x+xMinCurr-1 > h-1 or
+                        y+yMinCurr-1 > w-1 or
+                        x+xMinCurr-1 < 0   or
+                        y+yMinCurr-1 < 0) ? 0 : 
+                   gradOutput[(x+xMinCurr-1)*gradOutputStride + (y+yMinCurr-1)]);
+            }
+        }
+
+        // go to the next channel
+        gradOutputInt += h*w;
+        gradOutput += h*gradOutputStride;
+    }
 }
 
 void backwardNoNorm(
