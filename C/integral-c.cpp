@@ -457,7 +457,7 @@ void updateGradInput(
         }
 
         // go to the next channel
-        gradOutputInt += h*w;
+        gradOutputInt += (h+1)*(w+1);
         gradOutput += h*gradOutputStride;
     }
 }
@@ -584,7 +584,7 @@ void updateGradInputFrac(
         }
 
         // go to the next channel
-        gradOutputInt += h*w;
+        gradOutputInt += (h+1)*(w+1);
         gradOutput += h*gradOutputStride;
     }
 }
