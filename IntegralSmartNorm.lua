@@ -26,6 +26,11 @@ void forwardNoNormReplicateFrac(
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
     float *inData, int inDataStride);
 
+void updateGradInput(
+    float *gradOutputInt, int channels, int h, int w,float *gradInput,
+    int *xMin, int *xMax, int *yMin, int *yMax,
+    float *gradOutput, int gradOutputStride);
+
 void updateGradInputFrac(
     float *gradOutputInt, int channels, int h, int w, float *gradInput,
     int *xMin, int *xMax, int *yMin, int *yMax,
@@ -422,7 +427,7 @@ do
                 local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
                 local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
                 local outputNonNorm = self.outputNonNorm[inPlaneIdx]
-            
+
                 for windowIdx = 1,self.nWindows do
                     
                     -- Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
@@ -683,9 +688,17 @@ do
                         self.integralGradOutput[windowIdx]:copy(self.integralDouble[1]) -- cast
                     end
 
+                    local updateGradInputCFunction
+
                     -- compute the needed integral sums
                     if self.exact then
-                        C_lib.updateGradInputFrac(
+                        if self.replicate then
+                            updateGradInputCFunction = C_lib.updateGradInputFrac
+                        else
+                            error('NYI')
+                        end
+
+                        updateGradInputCFunction(
                             torch.data(self.integralGradOutput), self.nWindows,
                             self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
                             torch.data(self.xMinInt), torch.data(self.xMaxInt),
@@ -694,8 +707,18 @@ do
                             torch.data(self.yMinFrac), torch.data(self.yMaxFrac),
                             torch.data(gradOutput[inPlaneIdx]), gradOutput:stride(3))
                     else
-                        error('NYI')
-                        C_lib.updateGradInput()
+                        if self.replicate then
+                            updateGradInputCFunction = C_lib.updateGradInput
+                        else
+                            error('NYI')
+                        end
+
+                        updateGradInputCFunction(
+                            torch.data(self.integralGradOutput), self.nWindows,
+                            self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
+                            torch.data(self.xMinInt), torch.data(self.xMaxInt),
+                            torch.data(self.yMinInt), torch.data(self.yMaxInt),
+                            torch.data(gradOutput[inPlaneIdx]), gradOutput:stride(3))
                     end
                 end
             end
@@ -705,8 +728,6 @@ do
     end
 
     function accGradParametersCPU(self, input, gradOutput, scale)
-        error('NYI')
-
         if self.normalize then
             if not self._backwardDone then
                 local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)

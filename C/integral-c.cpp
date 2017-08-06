@@ -419,26 +419,46 @@ void forwardNoNormFrac(
 }
 
 void updateGradInput(
-    float *gradOutputInt, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
+    float *gradOutputInt, int channels, int h, int w,float *gradInput,
+    int *xMin, int *xMax, int *yMin, int *yMax,
+    float *gradOutput, int gradOutputStride) {
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
-    for (int x = 0; x < h; ++x) {
-        for (int y = 0; y < w; ++y) {
+    for (int ch = 0; ch < channels; ++ch) {
 
-            t = max(0, min(x+xMinCurr, h) );
-            b = max(0, min(x+xMaxCurr, h) );
-            l = max(0, min(y+yMinCurr, w) );
-            r = max(0, min(y+yMaxCurr, w) );
+        #pragma omp parallel for private(t,b,l,r)
+        for (int x = 0; x < h; ++x) {
+            for (int y = 0; y < w; ++y) {
 
-            outData[x*w + y] = 
-                ( gradOutputInt[b*(w+1) + r]
-                - gradOutputInt[t*(w+1) + r]
-                - gradOutputInt[b*(w+1) + l]
-                + gradOutputInt[t*(w+1) + l]);
+                const int xMinCurr = (x == 0   and xMax[ch] >= 0 ? 0    : xMin[ch]);
+                const int xMaxCurr = (x == h-1 and xMin[ch] <= 0 ? h+66 : xMax[ch]);
+                const int yMinCurr = (y == 0   and yMax[ch] >= 0 ? 0    : yMin[ch]);
+                const int yMaxCurr = (y == w-1 and yMin[ch] <= 0 ? w+66 : yMax[ch]);
+
+                t = max(0, min(x+xMinCurr, h) );
+                b = max(0, min(x+xMaxCurr, h) );
+                l = max(0, min(y+yMinCurr, w) );
+                r = max(0, min(y+yMaxCurr, w) );
+
+                // if (x == 1 and y == 1) {
+                //     std::cout << "gradInput[x*w + y] += " << std::endl;
+                //     std::cout << "+ gradOutputInt[b*(w+1) + r] = " << gradOutputInt[b*(w+1) + r] << std::endl;
+                //     std::cout << "- gradOutputInt[t*(w+1) + r] = " << gradOutputInt[t*(w+1) + r] << std::endl;
+                //     std::cout << "- gradOutputInt[b*(w+1) + l] = " << gradOutputInt[b*(w+1) + l] << std::endl;
+                //     std::cout << "+ gradOutputInt[t*(w+1) + l] = " << gradOutputInt[t*(w+1) + l] << std::endl;
+
+                gradInput[x*w + y] += 
+                    ( gradOutputInt[b*(w+1) + r]
+                    - gradOutputInt[t*(w+1) + r]
+                    - gradOutputInt[b*(w+1) + l]
+                    + gradOutputInt[t*(w+1) + l]);;
+            }
         }
+
+        // go to the next channel
+        gradOutputInt += h*w;
+        gradOutput += h*gradOutputStride;
     }
 }
 
@@ -447,12 +467,13 @@ void updateGradInputFrac(
     int *xMin, int *xMax, int *yMin, int *yMax,
     float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
     float *gradOutput, int gradOutputStride) {
+    
     int t, b, l, r;
     int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
 
     for (int ch = 0; ch < channels; ++ch) {
 
-        // #pragma omp parallel for private(t,b,l,r,xMinCurr,xMaxCurr,yMinCurr,yMaxCurr)
+        #pragma omp parallel for private(t,b,l,r,xMinCurr,xMaxCurr,yMinCurr,yMaxCurr)
         for (int x = 0; x < h; ++x) {
             for (int y = 0; y < w; ++y) {
 
