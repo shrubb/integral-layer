@@ -42,10 +42,12 @@ void backwardNoNorm(
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
 
 void backwardNoNormFrac(
-    float *intData, float *gradOutData, int h, int w, float *deltas,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride); ]]
+    float *intData, float *gradOutData, float scale,
+    int nWindows, int h, int w,
+    float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
+    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
+    float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
+    float *inData, int inStrideChannel, int inStrideRow); ]]
 
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
@@ -111,14 +113,10 @@ do
 
         -- when computing exact forward/backward passes, will need 
         -- these tmp arrays for int and frac parts of xMin/xMax/yMin/yMax
-        self.xMinInt, self.xMaxInt = 
-            torch.IntTensor(self.nWindows), torch.IntTensor(self.nWindows)
-        self.yMinInt, self.yMaxInt = 
-            torch.IntTensor(self.nWindows), torch.IntTensor(self.nWindows)
-        self.xMinFrac, self.xMaxFrac = 
-            torch.FloatTensor(self.nWindows), torch.FloatTensor(self.nWindows)
-        self.yMinFrac, self.yMaxFrac = 
-            torch.FloatTensor(self.nWindows), torch.FloatTensor(self.nWindows)
+        self.xMinInt, self.xMaxInt = self.xMin:int(), self.xMin:int()
+        self.yMinInt, self.yMaxInt = self.xMin:int(), self.xMin:int()
+        self.xMinFrac, self.xMaxFrac = self.xMin:clone(), self.xMin:clone()
+        self.yMinFrac, self.yMaxFrac = self.xMin:clone(), self.xMin:clone()
 
         -- loss gradients wrt module's parameters
         self.gradXMin = torch.FloatTensor(nInputPlane, nWindows):zero()
@@ -128,7 +126,7 @@ do
 
         -- for smart normalization
         self.ones = torch.ones(h, w)
-        --self.onesIntegral = cv.integral{torch.ones(h, w)}:float()
+        self.onesIntegral = cv.integral{torch.ones(h, w)}:float()
         self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, h, w)
         self.cdiv = nn.CDivTable()
         
@@ -136,9 +134,6 @@ do
         self:reset()
 
         self.gradInput = torch.FloatTensor()
-
-        -- dirty fix (see dirtyFixWindows()) parameters
-        self.maxX, self.maxY = 1e9, 1e9
 
         -- if false, rounds window borders and thus ignores fractional box parts
         -- (this is obviously faster, set this to false in production)
@@ -185,11 +180,6 @@ do
             self.tmpArrayGPU = nil
             self.tmpArraySumGPU = nil
             self.integralCuda = nil
-
-            local function reinterpretFloatAsInt(t)
-                return torch.IntTensor(
-                    torch.IntStorage(t:nElement(), tonumber(torch.data(t, true))))
-            end
             
             for _, param in ipairs{'xMinInt', 'xMaxInt', 'yMinInt', 'yMaxInt'} do
                 self[param] = self[param]:int()
@@ -291,51 +281,49 @@ do
     end
 
     local function dirtyFixWindows(self)
-        -- dirty fix: don't let windows explode
-        for _, borderKind in pairs{'Min', 'Max'} do
-            self['x' .. borderKind]:clamp(-self.maxX, self.maxX)
-            self['y' .. borderKind]:clamp(-self.maxY, self.maxY)
-        end
+        -- dirty fix 1: don't let windows go outside the image, otherwise gradParams will vanish
+        self.xMin:clamp(-self.h-1, self.h-1)
+        self.xMax:clamp(-self.h+1, self.h+1)
+        self.yMin:clamp(-self.w-1, self.w-1)
+        self.yMax:clamp(-self.w+1, self.w+1)
 
-        -- dirty fix: don't let windows become thinner than 1px (or 2.1 px, if in non-exact mode)
-        do
-            local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
-            local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
+        -- dirty fix 2: don't let windows become thinner than 1px (or 2.1 px, if in non-exact mode)
+        local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
+        local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
 
-            if self.exact then
-                for i = 1,xMax:nElement() do
-                    if xMin[i] > xMax[i] then
-                        if math.abs(xMin[i]) > math.abs(xMax[i]) then
-                            xMax[i] = xMin[i] + 0.5
-                        else
-                            xMin[i] = xMax[i] - 0.5
-                        end
-                    end
-
-                    if yMin[i] > yMax[i] then
-                        if math.abs(yMin[i]) > math.abs(yMax[i]) then
-                            yMax[i] = yMin[i] + 0.5
-                        else
-                            yMin[i] = yMax[i] - 0.5
-                        end
+        if self.exact then
+            for i = 1,xMax:nElement() do
+                if xMin[i] > xMax[i] then
+                    if math.abs(xMin[i]) > math.abs(xMax[i]) then
+                        xMax[i] = xMin[i] + 0.5
+                    else
+                        xMin[i] = xMax[i] - 0.5
                     end
                 end
-            else
-                for i = 1,xMax:nElement() do
-                    if xMin[i] + 1.1 > xMax[i] then
-                        local mean = 0.5 * (xMin[i] + xMax[i])
-                        xMin[i] = mean - 0.55
-                        xMax[i] = mean + 0.55
-                    end
 
-                    if yMin[i] + 1.1 > yMax[i] then
-                        local mean = 0.5 * (yMin[i] + yMax[i])
-                        yMin[i] = mean - 0.55
-                        yMax[i] = mean + 0.55
+                if yMin[i] > yMax[i] then
+                    if math.abs(yMin[i]) > math.abs(yMax[i]) then
+                        yMax[i] = yMin[i] + 0.5
+                    else
+                        yMin[i] = yMax[i] - 0.5
                     end
                 end
             end
-        end -- do
+        else
+            for i = 1,xMax:nElement() do
+                if xMin[i] + 1.1 > xMax[i] then
+                    local mean = 0.5 * (xMin[i] + xMax[i])
+                    xMin[i] = mean - 0.55
+                    xMax[i] = mean + 0.55
+                end
+
+                if yMin[i] + 1.1 > yMax[i] then
+                    local mean = 0.5 * (yMin[i] + yMax[i])
+                    yMin[i] = mean - 0.55
+                    yMax[i] = mean + 0.55
+                end
+            end
+        end
     end
 
     function updateOutputCPU(self, input)
@@ -366,7 +354,6 @@ do
                 -- However, when computing sums, we subtract values at points 
                 -- like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
                 -- and yMin, and thus finally they are not affected.
-                
                 local xMinCurr, xMinCurrFrac = round_up  (xMin[globalWindowIdx])
                 local xMaxCurr, xMaxCurrFrac = round_down(xMax[globalWindowIdx]+1)
                 local yMinCurr, yMinCurrFrac = round_up  (yMin[globalWindowIdx])
@@ -381,7 +368,7 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        forwardCFunction = C_lib.forwardNoNormReplicateFrac 
+                        forwardCFunction = C_lib.forwardNoNormReplicateFrac
                     else
                         forwardCFunction = C_lib.forwardNoNormFrac
                     end
@@ -629,15 +616,17 @@ do
                     local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
                     local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
 
+                    local xMinInt, xMinFrac = self.xMinInt[inPlaneIdx], self.xMinFrac[inPlaneIdx]
+                    local xMaxInt, xMaxFrac = self.xMaxInt[inPlaneIdx], self.xMaxFrac[inPlaneIdx]
+                    local yMinInt, yMinFrac = self.yMinInt[inPlaneIdx], self.yMinFrac[inPlaneIdx]
+                    local yMaxInt, yMaxFrac = self.yMaxInt[inPlaneIdx], self.yMaxFrac[inPlaneIdx]
+
+                    -- TODO pack this in CUDA code
                     for windowIdx = 1,self.nWindows do
-                        self.xMinInt[windowIdx], self.xMinFrac[windowIdx] = 
-                            round_up  (-xMax[windowIdx])
-                        self.xMaxInt[windowIdx], self.xMaxFrac[windowIdx] = 
-                            round_down(-xMin[windowIdx]+1)
-                        self.yMinInt[windowIdx], self.yMinFrac[windowIdx] = 
-                            round_up  (-yMax[windowIdx])
-                        self.yMaxInt[windowIdx], self.yMaxFrac[windowIdx] = 
-                            round_down(-yMin[windowIdx]+1)
+                        xMinInt[windowIdx], xMinFrac[windowIdx] = round_up  (-xMax[windowIdx])
+                        xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(-xMin[windowIdx]+1)
+                        yMinInt[windowIdx], yMinFrac[windowIdx] = round_up  (-yMax[windowIdx])
+                        yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(-yMin[windowIdx]+1)
                     end
 
                     -- integralCuda is (nInputPlane) x (h+1) x (w+1)
@@ -668,15 +657,16 @@ do
                     local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
                     local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
 
+                    local xMinInt, xMinFrac = self.xMinInt[inPlaneIdx], self.xMinFrac[inPlaneIdx]
+                    local xMaxInt, xMaxFrac = self.xMaxInt[inPlaneIdx], self.xMaxFrac[inPlaneIdx]
+                    local yMinInt, yMinFrac = self.yMinInt[inPlaneIdx], self.yMinFrac[inPlaneIdx]
+                    local yMaxInt, yMaxFrac = self.yMaxInt[inPlaneIdx], self.yMaxFrac[inPlaneIdx]
+
                     for windowIdx = 1,self.nWindows do
-                        self.xMinInt[windowIdx], self.xMinFrac[windowIdx] =
-                            round_up  (-xMax[windowIdx])
-                        self.xMaxInt[windowIdx], self.xMaxFrac[windowIdx] = 
-                            round_down(-xMin[windowIdx]+1)
-                        self.yMinInt[windowIdx], self.yMinFrac[windowIdx] = 
-                            round_up  (-yMax[windowIdx])
-                        self.yMaxInt[windowIdx], self.yMaxFrac[windowIdx] = 
-                            round_down(-yMin[windowIdx]+1)
+                        xMinInt[windowIdx], xMinFrac[windowIdx] = round_up  (-xMax[windowIdx])
+                        xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(-xMin[windowIdx]+1)
+                        yMinInt[windowIdx], yMinFrac[windowIdx] = round_up  (-yMax[windowIdx])
+                        yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(-yMin[windowIdx]+1)
                     end
 
                     -- compute integral image of gradOutput's planes corresponding to inPlaneIdx
@@ -701,10 +691,10 @@ do
                         updateGradInputCFunction(
                             torch.data(self.integralGradOutput), self.nWindows,
                             self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
-                            torch.data(self.xMinInt), torch.data(self.xMaxInt),
-                            torch.data(self.yMinInt), torch.data(self.yMaxInt),
-                            torch.data(self.xMinFrac), torch.data(self.xMaxFrac),
-                            torch.data(self.yMinFrac), torch.data(self.yMaxFrac),
+                            torch.data(xMinInt), torch.data(xMaxInt),
+                            torch.data(yMinInt), torch.data(yMaxInt),
+                            torch.data(xMinFrac), torch.data(xMaxFrac),
+                            torch.data(yMinFrac), torch.data(yMaxFrac),
                             torch.data(gradOutput[inPlaneIdx]), gradOutput:stride(3))
                     else
                         if self.replicate then
@@ -716,8 +706,8 @@ do
                         updateGradInputCFunction(
                             torch.data(self.integralGradOutput), self.nWindows,
                             self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
-                            torch.data(self.xMinInt), torch.data(self.xMaxInt),
-                            torch.data(self.yMinInt), torch.data(self.yMaxInt),
+                            torch.data(xMinInt), torch.data(xMaxInt),
+                            torch.data(yMinInt), torch.data(yMaxInt),
                             torch.data(gradOutput[inPlaneIdx]), gradOutput:stride(3))
                     end
                 end
@@ -730,75 +720,83 @@ do
     function accGradParametersCPU(self, input, gradOutput, scale)
         if self.normalize then
             if not self._backwardDone then
-                local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
-                local outputOnes4D = 
-                    nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
-
-                self.cdiv:updateGradInput(
-                    {outputNonNorm4D, outputOnes4D},
-                    splitFirstDim(self, gradOutput))
+                self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
                 self._backwardDone = true
             end
+            gradOutput = self.cdiv.gradInput[1]
         end
 
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
-        
+
+        gradOutput = gradOutput:view(self.nInputPlane, self.nWindows, self.h, self.w)
+
         for k = 1,(self.normalize and 2 or 1) do
             -- iteration 1: gradient by outputNonNorm
             -- iteration 2: gradient by outputOnes
-            local gradOutput = self.normalize and flattenFirstDims(self, self.cdiv.gradInput[k]) or gradOutput
-            assert(gradOutput:stride(2) == self.w) -- for C function
+            local gradOutput = self.normalize and self.cdiv.gradInput[k] or gradOutput
+            assert(gradOutput:stride(gradOutput:nDimension()-1) == self.w) -- for C function
 
-            for inPlaneIdx = 1,input:size(1) do
-                for nWindow = 1,self.nWindows do
-                    local outPlaneIdx = self.nWindows*(inPlaneIdx-1) + nWindow
-                    
-                    local xMinCurr, xMinCurrFrac = round_up  (self.xMin[nWindow]-1)
-                    local xMaxCurr, xMaxCurrFrac = round_down(self.xMax[nWindow]+1)
-                    local yMinCurr, yMinCurrFrac = round_up  (self.yMin[nWindow]-1)
-                    local yMaxCurr, yMaxCurrFrac = round_down(self.yMax[nWindow]+1)
+            for inPlaneIdx = 1,self.nInputPlane do
 
-                    local gradOutData = torch.data(gradOutput[outPlaneIdx])
-                    local intData
+                local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
+                local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
+
+                local gradXMin, gradXMax = self.gradXMin[inPlaneIdx], self.gradXMax[inPlaneIdx]
+                local gradYMin, gradYMax = self.gradYMin[inPlaneIdx], self.gradYMax[inPlaneIdx]
+
+                local xMinInt, xMinFrac = self.xMinInt[inPlaneIdx], self.xMinFrac[inPlaneIdx]
+                local xMaxInt, xMaxFrac = self.xMaxInt[inPlaneIdx], self.xMaxFrac[inPlaneIdx]
+                local yMinInt, yMinFrac = self.yMinInt[inPlaneIdx], self.yMinFrac[inPlaneIdx]
+                local yMaxInt, yMaxFrac = self.yMaxInt[inPlaneIdx], self.yMaxFrac[inPlaneIdx]
+
+                for windowIdx = 1,self.nWindows do
+                    xMinInt[windowIdx], xMinFrac[windowIdx] = round_up  (xMin[windowIdx]-1)
+                    xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(xMax[windowIdx]+1)
+                    yMinInt[windowIdx], yMinFrac[windowIdx] = round_up  (yMin[windowIdx]-1)
+                    yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(yMax[windowIdx]+1)
+                end
+
+                local gradOutData = torch.data(gradOutput[inPlaneIdx])
+                local intData
+                if k == 1 then
+                     intData = torch.data(self.integral[inPlaneIdx])
+                else
+                    intData = torch.data(self.onesIntegral)
+                end
+                
+                if self.exact then
+                    local inData, inStrideChannel, inStrideRow
                     if k == 1 then
-                        intData = torch.data(self.integral[inPlaneIdx])
-                    else
-                        intData = torch.data(self.onesIntegral)
+                        inData = torch.data(input[inPlaneIdx])
+                        inStrideChannel = input:stride(input:nDimension()-2)
+                        inStrideRow = input:stride(input:nDimension()-1)
+                    else -- k == 2
+                        inData = torch.data(self.ones)
+                        inStrideChannel = 0
+                        inStrideRow = self.ones:stride(1)
                     end
                     
-                    -- deltas of dOut(x,y) (sum over one window)
-                    local deltas = ffi.new('float[4]')
-                    
-                    if self.exact then
-                        local inData, inStride
-                        if k == 1 then
-                            inData = torch.data(input[inPlaneIdx])
-                            inStride = input:stride(2)
-                        else -- k == 2
-                            inData = torch.data(self.ones)
-                            inStride = self.ones:stride(1)
-                        end
-                        
-                        C_lib.backwardNoNormFrac(
-                            intData, gradOutData, self.h, self.w, deltas,
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                            xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
-                            inData, inStride)
-                    else
-                        C_lib.backwardNoNorm(
-                            intData, gradOutData, self.h, self.w, deltas,
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
-                    end
-
-                    local xMinDelta, xMaxDelta = deltas[0], deltas[1]
-                    local yMinDelta, yMaxDelta = deltas[2], deltas[3]
-                    
-                    self.gradXMax[nWindow] = self.gradXMax[nWindow] + scale * xMaxDelta
-                    self.gradXMin[nWindow] = self.gradXMin[nWindow] + scale * xMinDelta
-                    self.gradYMax[nWindow] = self.gradYMax[nWindow] + scale * yMaxDelta
-                    self.gradYMin[nWindow] = self.gradYMin[nWindow] + scale * yMinDelta
+                    C_lib.backwardNoNormFrac(
+                        intData, gradOutData, scale,
+                        self.nWindows, self.h, self.w,
+                        torch.data(gradXMin), torch.data(gradXMax),
+                        torch.data(gradYMin), torch.data(gradYMax),
+                        torch.data(xMinInt), torch.data(xMaxInt),
+                        torch.data(yMinInt), torch.data(yMaxInt),
+                        torch.data(xMinFrac), torch.data(xMaxFrac),
+                        torch.data(yMinFrac), torch.data(yMaxFrac),
+                        inData, inStrideChannel, inStrideRow)
+                else
+                    error('NYI')
+                    C_lib.backwardNoNorm(
+                        intData, gradOutData, scale,
+                        self.nWindows, self.h, self.w,
+                        torch.data(gradXMin), torch.data(gradXMax),
+                        torch.data(gradYMin), torch.data(gradYMax),
+                        torch.data(xMinInt), torch.data(xMaxInt),
+                        torch.data(yMinInt), torch.data(yMaxInt))
                 end
             end
         end
@@ -809,15 +807,10 @@ do
         
         if self.normalize then
             if not self._backwardDone then
-                local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
-                local outputOnes4D = 
-                    nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
-
-                self.cdiv:updateGradInput(
-                    {outputNonNorm4D, outputOnes4D},
-                    splitFirstDim(self, gradOutput))
+                self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
                 self._backwardDone = true
             end
+            gradOutput = self.cdiv.gradInput[1]
         end
 
         if input:nDimension() == 2 then
