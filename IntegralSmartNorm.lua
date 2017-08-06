@@ -479,7 +479,7 @@ do
             -- divide elementwise to get normalized box filter maps
             self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         else
-            self.output = torch.Tensor(self.outputNonNorm:size())
+            self.output = self.outputNonNorm
         end
         
         self._backwardDone = false

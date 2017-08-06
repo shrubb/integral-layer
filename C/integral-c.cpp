@@ -195,7 +195,7 @@ void forwardNoNormReplicateFrac(
             + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
                 + max(0,min(y+yMinCurr-1,w-1))]
             ) * yMinCurrFrac
-            
+
             // -- corner pixels
             + xMaxCurrFrac*yMaxCurrFrac * (
                    (x+xMaxCurr >  h-1 or
@@ -221,7 +221,7 @@ void forwardNoNormReplicateFrac(
                     x+xMinCurr-1 <  0   or
                     y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
 
-            // if (x == 0 and y == 1) {
+            // if (x == 1 and y == 1) {
             //     std::cout << "outData[" << x << "," << y << "] = " << std::endl <<
             //     "+intData[" << b << "," << r << "] = " << intData[b*(w+1) + r] << std::endl <<
             //     "-intData[" << t << "," << r << "] = " << intData[t*(w+1) + r] << std::endl <<
