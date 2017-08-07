@@ -126,7 +126,7 @@ do
 
         -- for smart normalization
         self.ones = torch.ones(h, w)
-        self.onesIntegral = cv.integral{torch.ones(h, w)}:float()
+        self.onesIntegral = cv.integral{torch.ones(h, w)}:float() --torch.ones(h, w):float()
         self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, h, w)
         self.cdiv = nn.CDivTable()
         
@@ -282,10 +282,10 @@ do
 
     local function dirtyFixWindows(self)
         -- dirty fix 1: don't let windows go outside the image, otherwise gradParams will vanish
-        self.xMin:clamp(-self.h-1, self.h-1)
-        self.xMax:clamp(-self.h+1, self.h+1)
-        self.yMin:clamp(-self.w-1, self.w-1)
-        self.yMax:clamp(-self.w+1, self.w+1)
+        self.xMin:clamp(-self.h+1, self.h-1)
+        self.xMax:clamp(-self.h+1, self.h-1)
+        self.yMin:clamp(-self.w+1, self.w-1)
+        self.yMax:clamp(-self.w+1, self.w-1)
 
         -- dirty fix 2: don't let windows become thinner than 1px (or 2.1 px, if in non-exact mode)
         local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
@@ -761,7 +761,7 @@ do
                 local gradOutData = torch.data(gradOutput[inPlaneIdx])
                 local intData
                 if k == 1 then
-                     intData = torch.data(self.integral[inPlaneIdx])
+                    intData = torch.data(self.integral[inPlaneIdx])
                 else
                     intData = torch.data(self.onesIntegral)
                 end
@@ -777,7 +777,7 @@ do
                         inStrideChannel = 0
                         inStrideRow = self.ones:stride(1)
                     end
-                    
+
                     C_lib.backwardNoNormFrac(
                         intData, gradOutData, scale,
                         self.nWindows, self.h, self.w,
