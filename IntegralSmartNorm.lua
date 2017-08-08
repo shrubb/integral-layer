@@ -38,8 +38,9 @@ void updateGradInputFrac(
     float *gradOutput, int gradOutputStride);
 
 void backwardNoNorm(
-    float *intData, float *gradOutData, int h, int w, float *deltas,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
+    float *intData, float *gradOutData, float scale, int nWindows, int h, int w,
+    float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
+    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt);
 
 void backwardNoNormFrac(
     float *intData, float *gradOutData, float scale,
@@ -47,7 +48,7 @@ void backwardNoNormFrac(
     float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
     int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
     float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
-    float *inData, int inStrideChannel, int inStrideRow); ]]
+    float *inData, int inStrideRow); ]]
 
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
@@ -730,12 +731,12 @@ do
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
 
-        gradOutput = gradOutput:view(self.nInputPlane, self.nWindows, self.h, self.w)
-
         for k = 1,(self.normalize and 2 or 1) do
             -- iteration 1: gradient by outputNonNorm
             -- iteration 2: gradient by outputOnes
             local gradOutput = self.normalize and self.cdiv.gradInput[k] or gradOutput
+            gradOutput = gradOutput:view(self.nInputPlane, self.nWindows, self.h, self.w)
+
             assert(gradOutput:stride(gradOutput:nDimension()-1) == self.w) -- for C function
 
             for inPlaneIdx = 1,self.nInputPlane do
@@ -767,14 +768,12 @@ do
                 end
                 
                 if self.exact then
-                    local inData, inStrideChannel, inStrideRow
+                    local inData, inStrideRow
                     if k == 1 then
                         inData = torch.data(input[inPlaneIdx])
-                        inStrideChannel = input:stride(input:nDimension()-2)
                         inStrideRow = input:stride(input:nDimension()-1)
                     else -- k == 2
                         inData = torch.data(self.ones)
-                        inStrideChannel = 0
                         inStrideRow = self.ones:stride(1)
                     end
 
@@ -787,9 +786,8 @@ do
                         torch.data(yMinInt), torch.data(yMaxInt),
                         torch.data(xMinFrac), torch.data(xMaxFrac),
                         torch.data(yMinFrac), torch.data(yMaxFrac),
-                        inData, inStrideChannel, inStrideRow)
+                        inData, inStrideRow)
                 else
-                    error('NYI')
                     C_lib.backwardNoNorm(
                         intData, gradOutData, scale,
                         self.nWindows, self.h, self.w,
