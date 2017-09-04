@@ -288,7 +288,7 @@ do
         self.yMin:clamp(-self.w+1, self.w-1)
         self.yMax:clamp(-self.w+1, self.w-1)
 
-        -- dirty fix 2: don't let windows become thinner than 1px (or 2.1 px, if in non-exact mode)
+        -- dirty fix 2: don't let windows become thinner than 1px (or 2.01 px, if in non-exact mode)
         local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
         local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
 
@@ -312,13 +312,13 @@ do
             end
         else
             for i = 1,xMax:nElement() do
-                if xMin[i] + 1.1 > xMax[i] then
+                if xMin[i] + 1.01 > xMax[i] then
                     local mean = 0.5 * (xMin[i] + xMax[i])
                     xMin[i] = mean - 0.55
                     xMax[i] = mean + 0.55
                 end
 
-                if yMin[i] + 1.1 > yMax[i] then
+                if yMin[i] + 1.01 > yMax[i] then
                     local mean = 0.5 * (yMin[i] + yMax[i])
                     yMin[i] = mean - 0.55
                     yMax[i] = mean + 0.55
@@ -754,9 +754,9 @@ do
 
                 for windowIdx = 1,self.nWindows do
                     xMinInt[windowIdx], xMinFrac[windowIdx] = round_up  (xMin[windowIdx]-1)
-                    xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(xMax[windowIdx]+1)
+                    xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(xMax[windowIdx]  )
                     yMinInt[windowIdx], yMinFrac[windowIdx] = round_up  (yMin[windowIdx]-1)
-                    yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(yMax[windowIdx]+1)
+                    yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(yMax[windowIdx]  )
                 end
 
                 local gradOutData = torch.data(gradOutput[inPlaneIdx])

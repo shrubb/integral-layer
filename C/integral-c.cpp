@@ -609,36 +609,36 @@ void backwardNoNorm(
                 if (x+xMaxInt[windowIdx] > 1) {
                     xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                            + max(1,min(y+yMaxInt[windowIdx]-1, w  ))]
                         - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                            + max(1,min(y+yMaxInt[windowIdx]-1, w  ))]
                         - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx], w))]
+                            + max(0,min(y+yMinInt[windowIdx],   w-1))]
                         + intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx], w))]);
+                            + max(0,min(y+yMinInt[windowIdx],   w-1))]);
                 }
 
                 if (x+xMinInt[windowIdx] < h) {
                     xMinDelta += gradOutData[(x-1)*w + (y-1)] *
                         ( intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                            + max(1,min(y+yMaxInt[windowIdx]-1,   w))]
                         - intData[min(h,max(x+xMinInt[windowIdx]  , 0))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                            + max(1,min(y+yMaxInt[windowIdx]-1,   w))]
                         - intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx]  , w))]
+                            + max(0,min(y+yMinInt[windowIdx]  , w-1))]
                         + intData[min(h,max(x+xMinInt[windowIdx]  , 0))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx]  , w))]);
+                            + max(0,min(y+yMinInt[windowIdx]  , w-1))]);
                 }
 
                 if (y+yMaxInt[windowIdx] > 1) {
                     yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx],w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
+                        ( intData[max(1,min(x+xMaxInt[windowIdx]-1,   h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx]  , w))]
+                        - intData[max(1,min(x+xMaxInt[windowIdx]-1,   h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx]-1, w))]
-                        - intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx],w))]
-                        + intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
+                        - intData[max(0,min(x+xMinInt[windowIdx]  , h-1))*(w+1)
+                            + max(0,min(y+yMaxInt[windowIdx]  , w))]
+                        + intData[max(0,min(x+xMinInt[windowIdx]  , h-1))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx]-1, w))]);
 
                     // if (inPlaneIdx == 0 and windowIdx == 0) {
@@ -661,13 +661,13 @@ void backwardNoNorm(
                 
                 if (y+yMinInt[windowIdx] < w) {
                     yMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
+                        ( intData[max(1,min(x+xMaxInt[windowIdx]-1,   h))*(w+1) 
                             + max(0,min(y+yMinInt[windowIdx]-1,w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
+                        - intData[max(1,min(x+xMaxInt[windowIdx]-1,   h))*(w+1)
                             + min(w,max(y+yMinInt[windowIdx], 0))]
-                        - intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
+                        - intData[max(0,min(x+xMinInt[windowIdx]  , h-1))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx]-1,w))]
-                        + intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
+                        + intData[max(0,min(x+xMinInt[windowIdx]  , h-1))*(w+1)
                             + min(w,max(y+yMinInt[windowIdx], 0))]);
                 }
             }
@@ -698,96 +698,126 @@ void backwardNoNormFrac(
         float yMaxDelta = 0;
         float yMinDelta = 0;
     
-        #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
+        // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
         for (int x = 1; x <= h; ++x) {
             for (int y = 1; y <= w; ++y) {
-                
-                float tlCorner = inData[
-                                    max(0,min(h,x+xMinInt[windowIdx])-1) * inStrideRow +
-                                    max(0,min(w,y+yMinInt[windowIdx])-1)];
-                float blCorner = inData[
-                                    max(0,min(h,x+xMaxInt[windowIdx])-1) * inStrideRow +
-                                    max(0,min(w,y+yMinInt[windowIdx])-1)];
-                float trCorner = inData[
-                                    max(0,min(h,x+xMinInt[windowIdx])-1) * inStrideRow +
-                                    max(0,min(w,y+yMaxInt[windowIdx])-1)];
-                float brCorner = inData[
-                                    max(0,min(h,x+xMaxInt[windowIdx])-1) * inStrideRow +
-                                    max(0,min(w,y+yMaxInt[windowIdx])-1)];
 
-                if (x+xMaxInt[windowIdx] > 1) {
+                // `x+xMinInt[windowIdx]` = 0-index of the first "full" box cell
+                // `x+xMaxInt[windowIdx]` = 0-index of the last "full" box cell + 1
+                // <=> these are C-style segment indices
+
+                // When the "full" cell (integral) part is empty,
+                // there are two (fractional) cell rows that share the box.
+                // `x+xMaxInt[windowIdx]` is the 0-index of the second one.
+                
+                float tlCorner = y+yMinInt[windowIdx] <= 1 or x+xMinInt[windowIdx] <= 1 ? 0 :
+                                 inData[
+                                    max(0,min(h-1,x+xMinInt[windowIdx]  )) * inStrideRow +
+                                    max(0,min(w-1,y+yMinInt[windowIdx]  ))];
+                float blCorner = y+yMinInt[windowIdx] < 1 or x+xMaxInt[windowIdx] >= h ? 0 :
+                                 inData[
+                                    max(0,min(h-1,x+xMaxInt[windowIdx]-1)) * inStrideRow +
+                                    max(0,min(w-1,y+yMinInt[windowIdx]  ))];
+                float trCorner = y+yMaxInt[windowIdx] >= w or x+xMinInt[windowIdx] <= 1 ? 0 :
+                                 inData[
+                                    max(0,min(h-1,x+xMinInt[windowIdx]  )) * inStrideRow +
+                                    max(0,min(w-1,y+yMaxInt[windowIdx]-1))];
+                float brCorner = y+yMaxInt[windowIdx] >= w or x+xMaxInt[windowIdx] >= h ? 0 :
+                                 inData[
+                                    max(0,min(h-1,x+xMaxInt[windowIdx]-1)) * inStrideRow +
+                                    max(0,min(w-1,y+yMaxInt[windowIdx]-1))];
+
+                if (x+xMaxInt[windowIdx] >= 1 and x+xMaxInt[windowIdx] <= h) {
+                    std::cout << "xMax int, frac = " << xMaxInt[windowIdx] << ", " << xMaxFrac[windowIdx] << std::endl;
+                    std::cout << "xMin int, frac = " << xMinInt[windowIdx] << ", " << xMinFrac[windowIdx] << std::endl;
+                    std::cout << "yMin = " << y+yMinInt[windowIdx] << std::endl;
+                    std::cout << "yMax = " << y+yMaxInt[windowIdx] << std::endl;
+
                     xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
+                        ( intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx], w))]
+                        - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx], w))]
+                        - intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx], w))]
-                        + intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
+                        + intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx], w))]
                         + (x+xMaxInt[windowIdx] > h or x+xMaxInt[windowIdx] < 1 ? 0 :
                             brCorner * (y+yMaxInt[windowIdx] <= 1 ? 1.0f : yMaxFrac[windowIdx]) +
                             blCorner * (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx])));
+
+                    std::cout << "x,y = " << x << "," << y << ":" << std::endl;
+                    std::cout << xMaxDelta << " += " << gradOutData[(x-1)*w + (y-1)] << " * (" <<
+                        intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
+                        intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
+                        intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
+                            + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
+                        intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
+                            + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
+                        (x+xMaxInt[windowIdx] > h or x+xMaxInt[windowIdx] < 1 ? 0 :
+                            brCorner) << "*" << (y+yMaxInt[windowIdx] <= 1 ? 1.0f : yMaxFrac[windowIdx]) << " + " <<
+                        (x+xMaxInt[windowIdx] > h or x+xMaxInt[windowIdx] < 1 ? 0 :
+                            blCorner) << "*" << (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]) << ")\n";
                 }
 
-                if (x+xMinInt[windowIdx] < h) {
-                    xMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
-                        - intData[min(h,max(x+xMinInt[windowIdx]  , 0))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                if (x+xMinInt[windowIdx] >= 1 and x+xMinInt[windowIdx] <= h) {
+                    xMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                        ( intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx]  , w))]
-                        + intData[min(h,max(x+xMinInt[windowIdx]  , 0))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx]  , w))]
-                        - (x+xMinInt[windowIdx] > h or x+xMinInt[windowIdx] < 1 ? 0 :
+                            + max(0,min(y+yMaxInt[windowIdx], w))]
+                        - intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
+                            + max(0,min(y+yMinInt[windowIdx], w))]
+                        + intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
+                            + max(0,min(y+yMinInt[windowIdx], w))]
+                        + (x+xMinInt[windowIdx] > h or x+xMinInt[windowIdx] < 1 ? 0 :
                             trCorner * (y+yMaxInt[windowIdx] <= 1 ? 1.0f : yMaxFrac[windowIdx]) +
                             tlCorner * (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx])));
+
+                    // std::cout << "x,y = " << x << "," << y << ":" << std::endl;
+                    // std::cout << xMinDelta << " += " << gradOutData[(x-1)*w + (y-1)] << " * (" <<
+                    //     intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1) 
+                    //         + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
+                    //     intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
+                    //         + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
+                    //     intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
+                    //         + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
+                    //     intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
+                    //         + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
+                    //     (x+xMinInt[windowIdx] > h or x+xMinInt[windowIdx] < 1 ? 0 :
+                    //         trCorner) << "*" << (y+yMaxInt[windowIdx] <= 1 ? 1.0f : yMaxFrac[windowIdx]) << " + " <<
+                    //     (x+xMinInt[windowIdx] > h or x+xMinInt[windowIdx] < 1 ? 0 :
+                    //         trCorner) << "*" << (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]) << ")\n";
                 }
 
-                if (y+yMaxInt[windowIdx] > 1) {
+                if (y+yMaxInt[windowIdx] >= 1 and y+yMaxInt[windowIdx] <= w) {
                     yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMaxInt[windowIdx],w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
-                        - intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx],w))]
-                        + intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
-                            + max(0,min(y+yMaxInt[windowIdx]-1, w))]
+                        ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1) 
+                            + max(0,min(y+yMaxInt[windowIdx]+1, w))]
+                        - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
+                            + max(0,min(y+yMaxInt[windowIdx]  , w))]
+                        - intData[max(0,min(x+xMinInt[windowIdx], h))*(w+1)
+                            + max(0,min(y+yMaxInt[windowIdx]+1, w))]
+                        + intData[max(0,min(x+xMinInt[windowIdx], h))*(w+1)
+                            + max(0,min(y+yMaxInt[windowIdx]  , w))]
                         + (y+yMaxInt[windowIdx] > w or y+yMaxInt[windowIdx] < 1 ? 0 :
                             trCorner * (x+xMinInt[windowIdx] >= h ? 1.0f : xMinFrac[windowIdx]) +
                             brCorner * (x+xMaxInt[windowIdx] <= 1 ? 1.0f : xMaxFrac[windowIdx])));
-
-                    // if (inPlaneIdx == 0 and windowIdx == 0) {
-                    // std::cout << "x,y = " << x << "," << y << ":" << std::endl;
-                    // std::cout << "x+xMinInt = " << x+xMinInt[windowIdx] << std::endl;
-                    // std::cout << "x+xMaxInt = " << x+xMaxInt[windowIdx] << std::endl;
-                    // std::cout << yMaxDelta << " += " << gradOutData[(x-1)*w + (y-1)] << " * (" <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                    //         + max(0,min(y+yMaxInt[windowIdx],w))] << " - " <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
-                    //         + max(0,min(y+yMaxInt[windowIdx]-1, w))] << " - " <<
-                    //     intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
-                    //         + max(0,min(y+yMaxInt[windowIdx],w))] << " + " <<
-                    //     intData[max(0,min(x+xMinInt[windowIdx],h))*(w+1)
-                    //         + max(0,min(y+yMaxInt[windowIdx]-1, w))] << " + " <<
-                    //     trCorner << "*" << (x+xMinInt[windowIdx] >= h ? 1.0f : xMinFrac[windowIdx]) << " + " <<
-                    //     brCorner << "*" << (x+xMaxInt[windowIdx] <= 1 ? 1.0f : xMaxFrac[windowIdx]) << ")" << std::endl;
-                    // }
                 }
                 
-                if (y+yMinInt[windowIdx] < w) {
-                    yMinDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1) 
-                            + max(0,min(y+yMinInt[windowIdx]-1,w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]-1, h))*(w+1)
-                            + min(w,max(y+yMinInt[windowIdx], 0))]
-                        - intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
-                            + max(0,min(y+yMinInt[windowIdx]-1,w))]
-                        + intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
-                            + min(w,max(y+yMinInt[windowIdx], 0))]
-                        - (y+yMinInt[windowIdx] > w or y+yMinInt[windowIdx] < 1 ? 0 :
+                if (y+yMinInt[windowIdx] >= 1 and y+yMinInt[windowIdx] <= w) {
+                    yMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                        ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1) 
+                            + max(0,min(y+yMinInt[windowIdx]  , w))]
+                        - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
+                            + max(w,min(y+yMinInt[windowIdx]-1, 0))]
+                        - intData[max(0,min(x+xMinInt[windowIdx], h))*(w+1)
+                            + max(0,min(y+yMinInt[windowIdx]  , w))]
+                        + intData[max(0,min(x+xMinInt[windowIdx], h))*(w+1)
+                            + max(w,min(y+yMinInt[windowIdx]-1, 0))]
+                        + (y+yMinInt[windowIdx] > w or y+yMinInt[windowIdx] < 1 ? 0 :
                             tlCorner * (x+xMinInt[windowIdx] >= h ? 1.0f : xMinFrac[windowIdx]) +
                             blCorner * (x+xMaxInt[windowIdx] <= 1 ? 1.0f : xMaxFrac[windowIdx])));
                 }
