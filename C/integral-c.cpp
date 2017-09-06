@@ -683,7 +683,6 @@ void backwardNoNormFrac(
 
     float tlCorner, trCorner, blCorner, brCorner; // values from inData
 
-    // #pragma omp parallel for
     for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
     
         double xMaxDelta = 0;

@@ -16,16 +16,19 @@ local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:su
 local h,w = math.random(2, 100), math.random(2, 100)
 print('h, w = ' .. h .. ', ' .. w)
 
+local CUDA = false
+local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
+
 int = IntegralSmartNorm(2, 2, h, w)
 
 int.exact = true
 int.smart = true
 int.replicate = true
 int.normalize = true
-crit = nn.MSECriterion(false)
+crit = nn.MSECriterion():type(dtype)
 
-img = torch.rand(int.nInputPlane, h, w)
-target = torch.rand(int.nInputPlane*int.nWindows, h, w):mul(2):add(-1)
+img = torch.rand(int.nInputPlane, h, w):type(dtype)
+target = torch.rand(int.nInputPlane*int.nWindows, h, w):mul(2):add(-1):type(dtype)
 
 local paramPlane, paramWin = math.random(1,int.nInputPlane), math.random(1,int.nWindows)
 print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)

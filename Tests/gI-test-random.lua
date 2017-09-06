@@ -12,9 +12,16 @@ math.randomseed(seed)
 local h,w = math.random(2, 400), math.random(2, 400)
 print('h, w = ' .. h .. ', ' .. w)
 
+local testType = 'corner' -- 'corner' | 'border' | 'inner'
+local CUDA = false
+local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
+
 int = IntegralSmartNorm(2, 2, h, w)
 
-local testType = 'corner' -- 'corner' | 'border' | 'inner'
+int.exact = true
+int.smart = true
+int.replicate = true
+int.normalize = false
 
 local targetX, targetY
 if testType == 'inner' then
@@ -38,14 +45,10 @@ local targetPlane = math.random(1, int.nInputPlane)
 
 print('targetX, targetY, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .. targetPlane)
 
-int.exact = true
-int.smart = true
-int.replicate = true
-int.normalize = true
-crit = nn.MSECriterion()
+crit = nn.MSECriterion():type(dtype)
 
-img = torch.rand(int.nInputPlane, h, w)
-target = torch.rand(int.nInputPlane*int.nWindows, h, w):add(-0.5):mul(0.1)
+img = torch.rand(int.nInputPlane, h, w):type(dtype)
+target = torch.rand(int.nInputPlane*int.nWindows, h, w):add(-0.5):mul(0.1):type(dtype)
 
 local function rand(a,b)
 	return torch.rand(1)[1] * (b-a) + a
@@ -69,6 +72,8 @@ for planeIdx = 1,int.nInputPlane do
     end
 end
 
+int:type(dtype)
+
 int:forward(img)
 
 target:add(int.output)
@@ -85,8 +90,8 @@ deriv = {}
 derivM = {}
 
 local k = 1
-local step = 1--0.1
-local innerStep = 1--0.004
+local step = 0.1
+local innerStep = 0.004
 
 for param = -5,5,step do
     img[{targetPlane, targetX, targetY}] = param
