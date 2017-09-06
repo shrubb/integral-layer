@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <omp.h>
 
 using std::max;
 using std::min;
@@ -109,7 +108,7 @@ void forwardNoNormReplicate(
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
+    // #pragma omp parallel for private(t,b,l,r)
     for (int x = 0; x < h; ++x) {
         for (int y = 0; y < w; ++y) {
 
@@ -136,7 +135,7 @@ void forwardNoNormReplicateFrac(
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
+    // #pragma omp parallel for private(t,b,l,r)
     for (int x = 0; x < h; ++x) {
         for (int y = 0; y < w; ++y) {
 
@@ -427,7 +426,7 @@ void updateGradInput(
 
     for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
 
-        #pragma omp parallel for private(t,b,l,r)
+        // #pragma omp parallel for private(t,b,l,r)
         for (int x = 0; x < h; ++x) {
             for (int y = 0; y < w; ++y) {
 
@@ -473,7 +472,7 @@ void updateGradInputFrac(
 
     for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
 
-        #pragma omp parallel for private(t,b,l,r,xMinCurr,xMaxCurr,yMinCurr,yMaxCurr)
+        // #pragma omp parallel for private(t,b,l,r,xMinCurr,xMaxCurr,yMinCurr,yMaxCurr)
         for (int x = 0; x < h; ++x) {
             for (int y = 0; y < w; ++y) {
 
@@ -602,7 +601,7 @@ void backwardNoNorm(
         double yMaxDelta = 0;
         double yMinDelta = 0;
     
-        #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
+        // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
         for (int x = 1; x <= h; ++x) {
             for (int y = 1; y <= w; ++y) {
 
@@ -684,6 +683,7 @@ void backwardNoNormFrac(
 
     float tlCorner, trCorner, blCorner, brCorner; // values from inData
 
+    // #pragma omp parallel for
     for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
     
         double xMaxDelta = 0;
@@ -691,7 +691,7 @@ void backwardNoNormFrac(
         double yMaxDelta = 0;
         double yMinDelta = 0;
     
-        #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
+        // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
         for (int x = 1; x <= h; ++x) {
             for (int y = 1; y <= w; ++y) {
 
