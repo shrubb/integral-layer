@@ -16,6 +16,10 @@ local testType = 'corner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
+if CUDA then
+    require 'cunn'
+end
+
 int = IntegralSmartNorm(2, 2, h, w)
 
 int.exact = true
@@ -82,7 +86,7 @@ loss = crit:forward(int.output, target)
 gradOutput = crit:updateGradInput(int.output, target)
 
 int:zeroGradParameters()
-int:backward(img, gradOutput)
+int:updateGradInput(img, gradOutput) -- backward
 
 params = {}
 loss = {}
@@ -101,7 +105,7 @@ for param = -5,5,step do
     loss[k] = crit:forward(pred, target)
 
     int:zeroGradParameters()
-    int:backward(img, crit:updateGradInput(pred, target))
+    int:updateGradInput(img, crit:updateGradInput(pred, target))
     derivM[k] = int.gradInput[{targetPlane, targetX, targetY}]
     
     img[{targetPlane, targetX, targetY}] = param + innerStep

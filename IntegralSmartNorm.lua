@@ -53,14 +53,27 @@ void backwardNoNormFrac(
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
 ffi.cdef [[
-void forwardCudaNoNorm(
-    float *intData, int h, int w, int nWindows, float *outData,
+void forwardCudaNoNormReplicate(
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax);
 
-void forwardCudaNoNormFrac(
-    float *intData, int h, int w, int nWindows, float *outData,
+void forwardCudaNoNormReplicateFrac(
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStride);
+    float *inData, int inDataStrideRow, int inDataStrideChannel);
+
+void updateGradInputCuda(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax);
+
+void updateGradInputCudaFrac(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel);
 
 void backwardCudaSingle(
     float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
@@ -624,49 +637,58 @@ do
                 input = nn.Unsqueeze(1):type(self._type):forward(input)
             end
 
-            self.gradInput:resize(input:size()):zero()
+            self.gradInput:resize(input:size())
             gradOutput = gradOutput:view(self.nInputPlane, self.nWindows, self.h, self.w)
 
             if self._type == 'torch.CudaTensor' then
+                
+                self.integralGradOutput:resize(self.nWindows, self.h, self.w)
+
+                if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
+                    self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
+                end
+
                 for inPlaneIdx = 1,self.nInputPlane do
-                    local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
-                    local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
 
-                    local xMinInt, xMinFrac = self.xMinInt[inPlaneIdx], self.xMinFrac[inPlaneIdx]
-                    local xMaxInt, xMaxFrac = self.xMaxInt[inPlaneIdx], self.xMaxFrac[inPlaneIdx]
-                    local yMinInt, yMinFrac = self.yMinInt[inPlaneIdx], self.yMinFrac[inPlaneIdx]
-                    local yMaxInt, yMaxFrac = self.yMaxInt[inPlaneIdx], self.yMaxFrac[inPlaneIdx]
+                    -- CUDA_lib.integralImageCuda(
+                    --     torch.data(gradOutput[inPlaneIdx]), torch.data(self.integralGradOutput),
+                    --     self.nWindows, self.h, self.w, self.tmpArrayGPU)
 
-                    -- TODO pack this in CUDA code
-                    for windowIdx = 1,self.nWindows do
-                        xMinInt[windowIdx], xMinFrac[windowIdx] = round_up  (-xMax[windowIdx])
-                        xMaxInt[windowIdx], xMaxFrac[windowIdx] = round_down(-xMin[windowIdx]+1)
-                        yMinInt[windowIdx], yMinFrac[windowIdx] = round_up  (-yMax[windowIdx])
-                        yMaxInt[windowIdx], yMaxFrac[windowIdx] = round_down(-yMin[windowIdx]+1)
-                    end
-
-                    -- integralCuda is (nInputPlane) x (h+1) x (w+1)
-                    if self.tmpArrayGPU:nElement() < self.integralCuda:nElement() then
-                        self.tmpArrayGPU:resize(self.integralCuda:nElement())
-                    end
-
-                    if self.integralGradOutput:nElement() < self.integralCuda:nElement() then
-                        self.integralGradOutput:resize(self.integralCuda:nElement())
-                    end
-
-                    CUDA_lib.integralImageCuda(
-                        torch.data(gradOutput[inPlaneIdx]), torch.data(self.integralGradOutput),
-                        self.nWindows, self.h, self.w, self.tmpArrayGPU)
-
-                    error('NYI')
+                    -- compute the needed integral sums
+                    local updateGradInputCFunction
 
                     if self.exact then
-                        CUDA_lib.updateGradInputFrac()
+                        if self.replicate then
+                            updateGradInputCFunction = CUDA_lib.updateGradInputCudaFrac
+                        else
+                            error('NYI')
+                        end
+
+                        updateGradInputCFunction(
+                            torch.data(self.integralGradOutput),
+                            torch.data(self.gradInput[inPlaneIdx]),
+                            self.h, self.w, self.nWindows,
+                            torch.data(xMin), torch.data(xMax),
+                            torch.data(yMin), torch.data(yMax),
+                            torch.data(gradOutput[inPlaneIdx]),
+                            gradOutput:stride(3), gradOutput:stride(2))
                     else
-                        CUDA_lib.updateGradInput()
+                        if self.replicate then
+                            updateGradInputCFunction = CUDA_lib.updateGradInputCuda
+                        else
+                            error('NYI')
+                        end
+
+                        updateGradInputCFunction(
+                            torch.data(self.integralGradOutput), self.nWindows,
+                            self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
+                            torch.data(xMinInt), torch.data(xMaxInt),
+                            torch.data(yMinInt), torch.data(yMaxInt))
                     end
                 end
             else
+                self.gradInput:zero()
+
                 for inPlaneIdx = 1,self.nInputPlane do
                     -- gradInput of a conv is the conv of gradOutput with flipped kernels
                     -- so let's negate the parameters

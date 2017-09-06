@@ -185,7 +185,7 @@ __global__ void accumulateColsInplaceKernel(float *input, int channels, int h, i
     }
 }
 
-/************************ Box filters ************************/
+/************************ updateOutput ************************/
 
 __global__ void forwardKernel(
     float *intData, float *outData, int h, int w, int nWindows,
@@ -218,7 +218,7 @@ __global__ void forwardKernel(
     }
 }
 
-__global__ void forwardNoNormKernel(
+__global__ void forwardNoNormReplicateKernel(
     float *intData, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -257,7 +257,7 @@ __global__ void forwardNoNormKernel(
     }
 }
 
-__global__ void forwardNoNormFracKernel(
+__global__ void forwardNoNormReplicateFracKernel(
     float *intData, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -397,7 +397,7 @@ void forwardCuda(
     forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
 }
 
-void forwardCudaNoNorm(
+void forwardCudaNoNormReplicate(
     float *intData, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -408,12 +408,12 @@ void forwardCudaNoNorm(
         (w + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardNoNormKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, outData, h, w, nInputPlane, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
-void forwardCudaNoNormFrac(
+void forwardCudaNoNormReplicateFrac(
     float *intData, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -425,11 +425,252 @@ void forwardCudaNoNormFrac(
         (w + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardNoNormFracKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, outData, h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
         inData, inDataStrideRow, inDataStrideChannel);
 }
+
+/************************ updateGradInput ************************/
+
+__global__ void updateGradInputKernel(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax) {
+
+    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    if (x < h and y < w) {
+
+        int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
+        double outValue = 0;
+
+        for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
+
+            xMinCurr = (int)ceil(-xMax[windowIdx]);
+            yMinCurr = (int)ceil(-yMax[windowIdx]);
+
+            xMaxCurr = (int)floor(-xMin[windowIdx]) + 1;
+            yMaxCurr = (int)floor(-yMin[windowIdx]) + 1;
+
+            // The following code block implements these lines
+            // as if they were executed simultaneously (see `void updateGradInputFrac()`):
+            // xMinCurr = (x == 0   and xMaxCurr >= 0 ? 0    : xMinCurr);
+            // xMaxCurr = (x == h-1 and xMinCurr <= 0 ? h+66 : xMaxCurr);
+            // yMinCurr = (y == 0   and yMaxCurr >= 0 ? 0    : yMinCurr);
+            // yMaxCurr = (y == w-1 and yMinCurr <= 0 ? w+66 : yMaxCurr);
+
+            bool needToChangeMin, needToChangeMax;
+
+            needToChangeMin = x == 0   and xMaxCurr >= 0;
+            needToChangeMax = x == h-1 and xMinCurr <= 0;
+            if (needToChangeMin) xMinCurr = 0;
+            if (needToChangeMax) xMaxCurr = h+66;
+
+            needToChangeMin = y == 0   and yMaxCurr >= 0;
+            needToChangeMax = y == w-1 and yMinCurr <= 0;
+            if (needToChangeMin) yMinCurr = 0;
+            if (needToChangeMax) yMaxCurr = w+66;
+
+            const int t = max(0, min(x+xMinCurr, h) );
+            const int b = max(0, min(x+xMaxCurr, h) );
+            const int l = max(0, min(y+yMinCurr, w) );
+            const int r = max(0, min(y+yMaxCurr, w) );
+
+            outValue += gradOutputIntData[b*(w+1) + r];
+            outValue -= gradOutputIntData[t*(w+1) + r];
+            outValue -= gradOutputIntData[b*(w+1) + l];
+            outValue += gradOutputIntData[t*(w+1) + l];
+
+            // go to the next channel
+            gradOutputIntData += (h+1)*(w+1);
+        }
+
+        gradInputData[x*w + y] = outValue;
+    }
+}
+
+__global__ void updateGradInputFracKernel(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+
+    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    if (x < h and y < w) {
+
+        int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
+        double outValue = 0;
+
+        for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
+
+            xMinCurr = (int)ceil(-xMax[windowIdx]);
+            yMinCurr = (int)ceil(-yMax[windowIdx]);
+            const float xMinCurrFrac = (float)xMinCurr + xMax[windowIdx];
+            const float yMinCurrFrac = (float)yMinCurr + yMax[windowIdx];
+
+            xMaxCurr = (int)floor(-xMin[windowIdx]) + 1;
+            yMaxCurr = (int)floor(-yMin[windowIdx]) + 1;
+            const float xMaxCurrFrac = -xMin[windowIdx] - xMaxCurr;
+            const float yMaxCurrFrac = -yMin[windowIdx] - yMaxCurr;
+
+            // The following code block implements these lines
+            // as if they were executed simultaneously (see `void updateGradInputFrac()`):
+            // xMinCurr = (x == 0   and xMaxCurr >= 0 ? 0    : xMinCurr);
+            // xMaxCurr = (x == h-1 and xMinCurr <= 0 ? h+66 : xMaxCurr);
+            // yMinCurr = (y == 0   and yMaxCurr >= 0 ? 0    : yMinCurr);
+            // yMaxCurr = (y == w-1 and yMinCurr <= 0 ? w+66 : yMaxCurr);
+
+            bool needToChangeMin, needToChangeMax;
+
+            needToChangeMin = x == 0   and xMaxCurr >= 0;
+            needToChangeMax = x == h-1 and xMinCurr <= 0;
+            if (needToChangeMin) xMinCurr = 0;
+            if (needToChangeMax) xMaxCurr = h+66;
+
+            needToChangeMin = y == 0   and yMaxCurr >= 0;
+            needToChangeMax = y == w-1 and yMinCurr <= 0;
+            if (needToChangeMin) yMinCurr = 0;
+            if (needToChangeMax) yMaxCurr = w+66;
+
+            const int t = max(0, min(x+xMinCurr, h) );
+            const int b = max(0, min(x+xMaxCurr, h) );
+            const int l = max(0, min(y+yMinCurr, w) );
+            const int r = max(0, min(y+yMaxCurr, w) );
+
+            outValue += gradOutputIntData[b*(w+1) + r];
+            outValue -= gradOutputIntData[t*(w+1) + r];
+            outValue -= gradOutputIntData[b*(w+1) + l];
+            outValue += gradOutputIntData[t*(w+1) + l];
+
+            // -- xMax border
+            outValue +=
+                ( gradOutputIntData[max(0,min(x+xMaxCurr+1,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputIntData[max(0,min(x+xMaxCurr  ,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputIntData[max(0,min(x+xMaxCurr+1,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                + gradOutputIntData[max(0,min(x+xMaxCurr  ,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                ) * xMaxCurrFrac;
+
+            // -- yMax border
+            outValue +=
+                ( gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr+1,w))]
+                - gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr  ,w))]
+                - gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr+1,w))]
+                + gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMaxCurr  ,w))]
+                ) * yMaxCurrFrac;
+
+            // -- xMin border
+            outValue +=
+                ( gradOutputIntData[max(0,min(x+xMinCurr  ,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputIntData[max(0,min(x+xMinCurr-1,h))*(w+1)
+                    + max(0,min(y+yMaxCurr,w))]
+                - gradOutputIntData[max(0,min(x+xMinCurr  ,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                + gradOutputIntData[max(0,min(x+xMinCurr-1,h))*(w+1)
+                    + max(0,min(y+yMinCurr,w))]
+                ) * xMinCurrFrac;
+
+            // -- yMin border
+            outValue +=
+                ( gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr  ,w))]
+                - gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr-1,w))]
+                - gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr  ,w))]
+                + gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
+                    + max(0,min(y+yMinCurr-1,w))]
+                ) * yMinCurrFrac;
+
+            // -- corner pixels
+            outValue += 
+                xMaxCurrFrac*yMaxCurrFrac * (
+                   (x+xMaxCurr > h-1 or
+                    y+yMaxCurr > w-1 or
+                    x+xMaxCurr < 0   or
+                    y+yMaxCurr < 0) ? 0 : 
+                    gradOutputData[(x+xMaxCurr)*gradOutputStrideRow + (y+yMaxCurr)]);
+
+            outValue +=
+                xMinCurrFrac*yMaxCurrFrac * (
+                   (x+xMinCurr-1 > h-1 or
+                    y+yMaxCurr   > w-1 or
+                    x+xMinCurr-1 < 0   or
+                    y+yMaxCurr   < 0) ? 0 : 
+                    gradOutputData[(x+xMinCurr-1)*gradOutputStrideRow + (y+yMaxCurr)]);
+
+            outValue +=
+                xMaxCurrFrac*yMinCurrFrac * (
+                   (x+xMaxCurr   > h-1 or
+                    y+yMinCurr-1 > w-1 or
+                    x+xMaxCurr   < 0   or
+                    y+yMinCurr-1 < 0) ? 0 : 
+                    gradOutputData[(x+xMaxCurr)*gradOutputStrideRow + (y+yMinCurr-1)]);
+
+            outValue +=
+                xMinCurrFrac*yMinCurrFrac * (
+                   (x+xMinCurr-1 > h-1 or
+                    y+yMinCurr-1 > w-1 or
+                    x+xMinCurr-1 < 0   or
+                    y+yMinCurr-1 < 0) ? 0 : 
+                    gradOutputData[(x+xMinCurr-1)*gradOutputStrideRow + (y+yMinCurr-1)]);
+
+            // go to the next channel
+            gradOutputIntData += (h+1)*(w+1);
+            gradOutputData += gradOutputStrideChannel;
+        }
+
+        gradInputData[x*w + y] = outValue;
+    }
+}
+
+void updateGradInputCuda(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax) {
+
+    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
+    dim3 dimGrid(
+        (h + dimBlock.x - 1) / dimBlock.x, 
+        (w + dimBlock.y - 1) / dimBlock.y);
+
+    updateGradInputKernel <<<dimGrid, dimBlock>>> (
+        gradOutputIntData, gradInputData,
+        h, w, nWindows,
+        xMin, xMax, yMin, yMax);
+}
+
+void updateGradInputCudaFrac(
+    float *gradOutputIntData, float *gradInputData,
+    int h, int w, int nWindows,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+
+    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
+    dim3 dimGrid(
+        (h + dimBlock.x - 1) / dimBlock.x, 
+        (w + dimBlock.y - 1) / dimBlock.y);
+
+    updateGradInputFracKernel <<<dimGrid, dimBlock>>> (
+        gradOutputIntData, gradInputData,
+        h, w, nWindows,
+        xMin, xMax, yMin, yMax,
+        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+}
+
+/************************ accGradParameters ************************/
 
 // TODO templates for frac/non-frac
 
@@ -543,7 +784,7 @@ void backwardCudaSingle(
     yMinDeltaIntegral <<<dimGrid, dimBlock>>> (intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr);
     cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+2);
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 __global__ void xMaxDeltaIntegralFrac(
@@ -713,7 +954,7 @@ void backwardCudaSingleFrac(
         xMinCurrFrac, xMaxCurrFrac, inData, inDataStride);
     cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+2);
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 } // extern "C"
