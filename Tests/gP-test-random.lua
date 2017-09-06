@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1504617196
+-- seed = 1504693562
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -21,7 +21,7 @@ int = IntegralSmartNorm(2, 2, h, w)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
 crit = nn.MSECriterion(false)
 
 img = torch.rand(int.nInputPlane, h, w)

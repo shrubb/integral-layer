@@ -14,7 +14,7 @@ print('h, w = ' .. h .. ', ' .. w)
 
 int = IntegralSmartNorm(2, 2, h, w)
 
-local testType = 'border' -- 'corner' | 'border' | 'inner'
+local testType = 'corner' -- 'corner' | 'border' | 'inner'
 
 local targetX, targetY
 if testType == 'inner' then
@@ -41,7 +41,7 @@ print('targetX, targetY, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
 crit = nn.MSECriterion()
 
 img = torch.rand(int.nInputPlane, h, w)
@@ -85,8 +85,8 @@ deriv = {}
 derivM = {}
 
 local k = 1
-local step = 0.1
-local innerStep = 0.004
+local step = 1--0.1
+local innerStep = 1--0.004
 
 for param = -5,5,step do
     img[{targetPlane, targetX, targetY}] = param

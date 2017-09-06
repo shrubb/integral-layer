@@ -138,9 +138,9 @@ do
 
         -- if false, rounds window borders and thus ignores fractional box parts
         -- (this is obviously faster, set this to false in production)
-        self.exact = false
+        self.exact = true
         -- if true, additionally divides the output the box sum by its area
-        self.normalize = false
+        self.normalize = true
         -- if false, simply divides the box sum by its area
         -- if true, divides it by the "valid" area (= inside the image) under the box
         self.smart = true -- hard switch for now
@@ -292,39 +292,41 @@ do
         local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
         local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
 
-        if self.exact then
-            for i = 1,xMax:nElement() do
-                if xMin[i] > xMax[i] then
-                    if math.abs(xMin[i]) > math.abs(xMax[i]) then
-                        xMax[i] = xMin[i] + 0.5
-                    else
-                        xMin[i] = xMax[i] - 0.5
-                    end
-                end
+        -- if self.exact then
+        --     for i = 1,xMax:nElement() do
+        --         if xMin[i] > xMax[i] then
+        --             if math.abs(xMin[i]) > math.abs(xMax[i]) then
+        --                 xMax[i] = xMin[i] + 0.5
+        --             else
+        --                 xMin[i] = xMax[i] - 0.5
+        --             end
+        --         end
 
-                if yMin[i] > yMax[i] then
-                    if math.abs(yMin[i]) > math.abs(yMax[i]) then
-                        yMax[i] = yMin[i] + 0.5
-                    else
-                        yMin[i] = yMax[i] - 0.5
-                    end
-                end
-            end
-        else
+        --         if yMin[i] > yMax[i] then
+        --             if math.abs(yMin[i]) > math.abs(yMax[i]) then
+        --                 yMax[i] = yMin[i] + 0.5
+        --             else
+        --                 yMin[i] = yMax[i] - 0.5
+        --             end
+        --         end
+        --     end
+        -- else
             for i = 1,xMax:nElement() do
-                if xMin[i] + 1.01 > xMax[i] then
+                local minWidth = 1
+
+                if xMin[i] + minWidth - 0.99 > xMax[i] then
                     local mean = 0.5 * (xMin[i] + xMax[i])
-                    xMin[i] = mean - 0.55
-                    xMax[i] = mean + 0.55
+                    xMin[i] = mean - (minWidth - 0.9) / 2
+                    xMax[i] = mean + (minWidth - 0.9) / 2
                 end
 
-                if yMin[i] + 1.01 > yMax[i] then
+                if yMin[i] + minWidth - 0.99 > yMax[i] then
                     local mean = 0.5 * (yMin[i] + yMax[i])
-                    yMin[i] = mean - 0.55
-                    yMax[i] = mean + 0.55
+                    yMin[i] = mean - (minWidth - 0.9) / 2
+                    yMax[i] = mean + (minWidth - 0.9) / 2
                 end
             end
-        end
+        -- end
     end
 
     function updateOutputCPU(self, input)

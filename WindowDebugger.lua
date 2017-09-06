@@ -25,10 +25,10 @@ do
     end
 
     function WindowDebugger:add(intModule)
-        self.h.xMin[#self.h.xMin+1] = intModule.xMin:float():clone()
-        self.h.xMax[#self.h.xMax+1] = intModule.xMax:float():clone()
-        self.h.yMin[#self.h.yMin+1] = intModule.yMin:float():clone()
-        self.h.yMax[#self.h.yMax+1] = intModule.yMax:float():clone()
+        self.h.xMin[#self.h.xMin+1] = intModule.xMin:float():clone():view(-1)
+        self.h.xMax[#self.h.xMax+1] = intModule.xMax:float():clone():view(-1)
+        self.h.yMin[#self.h.yMin+1] = intModule.yMin:float():clone():view(-1)
+        self.h.yMax[#self.h.yMax+1] = intModule.yMax:float():clone():view(-1)
         self.h.h = intModule.h
         self.h.w = intModule.w
     end
