@@ -13,7 +13,7 @@ local h,w = math.random(2, 400), math.random(2, 400)
 print('h, w = ' .. h .. ', ' .. w)
 
 local testType = 'corner' -- 'corner' | 'border' | 'inner'
-local CUDA = false
+local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
 int = IntegralSmartNorm(2, 2, h, w)
@@ -123,6 +123,11 @@ end
 -- derivM[#derivM] = nil
 
 require 'gnuplot'
+
+if os.getenv('CUDA_VISIBLE_DEVICES') then
+    gnuplot.raw('set term postscript eps')
+    gnuplot.raw('set output \'gI-test-random.eps\'')
+end
 
 gnuplot.plot(
     {'Loss', torch.Tensor(params), torch.Tensor(loss), '-'},

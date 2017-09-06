@@ -442,6 +442,7 @@ do
                         if self.replicate then
                             forwardCFunction = C_lib.forwardNoNormReplicateFrac
                         else
+                            error('NYI')
                             forwardCFunction = C_lib.forwardNoNormFrac
                         end
 
@@ -456,6 +457,7 @@ do
                         if self.replicate then
                             forwardCFunction = C_lib.forwardNoNormReplicate
                         else
+                            error('NYI')
                             forwardCFunction = C_lib.forwardNoNorm
                         end
 
@@ -483,49 +485,60 @@ do
     end
 
     function updateOutputGPU(self, input)
-        error('NYI')
-
         dirtyFixWindows(self)
 
         if input:nDimension() == 2 then
             input = nn.Unsqueeze(1):type(self._type):forward(input)
         end
         
+        assert(input:size(1) == self.nInputPlane)
         assert(input:size(2) == self.h and input:size(3) == self.w)
         self.integralCuda:resize(input:size(1), input:size(2)+1, input:size(3)+1)
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
-            -- we put the result in the first plane
-            -- local outputOnesSingle = self.outputOnes[{{1, self.nWindows}, {}, {}}]
             assert(self.outputOnes:stride(2) == self.w) -- for C function safety
+
+            local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
+            local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
 
             local outData = torch.data(self.outputOnes)
             local intData = torch.data(self.onesIntegral)
-            
+
+            -- TODO: efficient memory usage
+            local outData = torch.data(self.outputOnes)
+            local intData = torch.data(self.onesIntegral)
+
+            local forwardCFunction
+
             if self.exact then
-                -- TODO get rid of `ones`
-                local ones = torch.ones(self.h, self.w):cuda()
-                CUDA_lib.forwardCudaNoNormFrac(
-                    intData, self.h, self.w, self.nWindows, outData, 
+                if self.replicate then
+                    forwardCFunction = CUDA_lib.forwardCudaNoNormFrac
+                else
+                    error('NYI')
+                    forwardCFunction = C_lib.forwardNoNormFrac
+                end
+
+                forwardCFunction(
+                    intData, outData,
+                    self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax),
-                    torch.data(ones), ones:stride(1))
+                    torch.data(self.ones), self.ones:stride(1), 0)
             else
-                CUDA_lib.forwardCudaNoNorm(
-                    intData, self.h, self.w, self.nWindows, outData, 
+                if self.replicate then
+                    forwardCFunction = CUDA_lib.forwardCudaNoNorm
+                else
+                    error('NYI')
+                    forwardCFunction = C_lib.forwardNoNorm
+                end
+
+                forwardCFunction(
+                    intData, outData,
+                    self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax))
             end
-
-            -- replace zeros with ones to avoid division-by-zero errors
-            -- (no need to do it anymore, I hope?)
-
-            -- copy this result to all other output planes
-            -- for inPlaneIdx = 2,input:size(1) do
-            --     local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-            --     self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
-            -- end
         end
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
@@ -539,43 +552,43 @@ do
                 input:size(1), input:size(2), input:size(3),
                 torch.data(self.tmpArrayGPU))
 
-            for inPlaneIdx = 1,input:size(1) do
-                self.outputNonNorm:resize(input:size(1)*self.nWindows, input:size(2), input:size(3))
+            self.outputNonNorm:resize(self.nInputPlane*self.nWindows, input:size(2), input:size(3))
 
-                assert(self.outputNonNorm:stride(1) == self.w * self.h) -- for C function safety
-                assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
+            assert(self.outputNonNorm:stride(1) == self.w * self.h) -- for C function safety
+            assert(self.outputNonNorm:stride(2) == self.w) -- for C function safety
 
-                local outPlaneIdx = 1 + self.nWindows*(inPlaneIdx-1)
+            local intData = torch.data(self.integralCuda)
+            local outData = torch.data(self.outputNonNorm)
+            
+            local forwardCudaFunction
 
-                local intData = torch.data(self.integralCuda[inPlaneIdx])
-                local outData = torch.data(self.outputNonNorm[outPlaneIdx])
-                
-                local forwardCudaFunction
-
-                if self.exact then
-                    if self.replicate then
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicateFrac
-                    else
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormFrac
-                    end
-
-                    forwardCudaFunction(
-                        intData, self.h, self.w, self.nWindows, outData, 
-                        torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input[inPlaneIdx]), input:stride(2))
+            if self.exact then
+                if self.replicate then
+                    forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicateFrac
                 else
-                    if self.replicate then
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicate
-                    else
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNorm
-                    end
-
-                    forwardCudaFunction(
-                        intData, self.h, self.w, self.nWindows, outData, 
-                        torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax))
+                    error('NYI')
+                    forwardCudaFunction = CUDA_lib.forwardCudaNoNormFrac
                 end
+
+                forwardCudaFunction(
+                    intData, outData,
+                    self.h, self.w, self.nInputPlane, self.nWindows,
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax),
+                    torch.data(input), input:stride(2), input:stride(1))
+            else
+                if self.replicate then
+                    forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicate
+                else
+                    error('NYI')
+                    forwardCudaFunction = CUDA_lib.forwardCudaNoNorm
+                end
+
+                forwardCudaFunction(
+                    intData, outData,
+                    self.h, self.w, self.nInputPlane, self.nWindows,
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax))
             end
         end
 

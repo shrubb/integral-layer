@@ -219,14 +219,19 @@ __global__ void forwardKernel(
 }
 
 __global__ void forwardNoNormKernel(
-    float *intData, float *outData, int h, int w, int nWindows,
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
+    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+    const int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
 
-    if (x < h and y < w and z < nWindows) {
+    const int inPlaneIdx = z / nWindows;
+
+    intData += (h+1) * (w+1) * inPlaneIdx;
+
+    if (x < h and y < w and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -236,33 +241,38 @@ __global__ void forwardNoNormKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        // xMinCurr = (int)ceil(xMin[z])
-        int t = max(0, min(x+(int)ceil(xMin[z]), h-1) );
-        // xMaxCurr = (int)floor(xMax[z])+1
-        int b = max(1, min(x+(int)floor(xMax[z])+1, h)   );
-        // yMinCurr = (int)ceil(yMin[z])
-        int l = max(0, min(y+(int)ceil(yMin[z]), w-1) );
-        // yMaxCurr = (int)floor(yMax[z])+1
-        int r = max(1, min(y+(int)floor(yMax[z])+1, w)   );
+        const int t = max(0, min(x+(int) ceil(xMin[z])  , h-1) );
+        const int b = max(1, min(x+(int)floor(xMax[z])+1, h  ) );
+        const int l = max(0, min(y+(int) ceil(yMin[z])  , w-1) );
+        const int r = max(1, min(y+(int)floor(yMax[z])+1, w  ) );
 
-        outData[z*w*h + x*w + y] = 
-            ( intData[b*(w+1) + r]
-            - intData[t*(w+1) + r]
-            - intData[b*(w+1) + l]
-            + intData[t*(w+1) + l]);
+        double outValue = 0;
+
+        outValue += intData[b*(w+1) + r];
+        outValue -= intData[t*(w+1) + r];
+        outValue -= intData[b*(w+1) + l];
+        outValue += intData[t*(w+1) + l];
+
+        outData[z*w*h + x*w + y] = outValue;
     }
 }
 
 __global__ void forwardNoNormFracKernel(
-    float *intData, float *outData, int h, int w, int nWindows,
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStride) {
+    float *inData, int inDataStrideRow, int inDataStrideChannel) {
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
+    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+    const int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
 
-    if (x < h and y < w and z < nWindows) {
+    const int inPlaneIdx = z / nWindows;
+
+    intData += (h+1) * (w+1) * inPlaneIdx;
+    inData  += inDataStrideChannel * inPlaneIdx;
+
+    if (x < h and y < w and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -272,101 +282,106 @@ __global__ void forwardNoNormFracKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        int   xMinCurr = (int)ceil(xMin[z]);
-        float xMinCurrFrac = (float)xMinCurr - xMin[z];
-        int   yMinCurr = (int)ceil(yMin[z]);
-        float yMinCurrFrac = (float)yMinCurr - yMin[z];
+        const int   xMinCurr = (int)ceil(xMin[z]);
+        const float xMinCurrFrac = (float)xMinCurr - xMin[z];
+        const int   yMinCurr = (int)ceil(yMin[z]);
+        const float yMinCurrFrac = (float)yMinCurr - yMin[z];
 
-        int   xMaxCurr = (int)floor(xMax[z]);
-        float xMaxCurrFrac = xMax[z] - (float)xMaxCurr;
-        ++xMaxCurr;
-        int   yMaxCurr = (int)floor(yMax[z]);
-        float yMaxCurrFrac = yMax[z] - (float)yMaxCurr;
-        ++yMaxCurr;
+        const float xMaxCurrFrac = xMax[z] - floor(xMax[z]);
+        const int   xMaxCurr = (int)floor(xMax[z]) + 1;
+        const float yMaxCurrFrac = yMax[z] - floor(yMax[z]);
+        const int   yMaxCurr = (int)floor(yMax[z]) + 1;
 
-        int t = max(0, min(x+xMinCurr, h-1) );
-        int b = max(1, min(x+xMaxCurr, h)   );
-        int l = max(0, min(y+yMinCurr, w-1) );
-        int r = max(1, min(y+yMaxCurr, w)   );
+        const int t = max(0, min(x+xMinCurr, h-1) );
+        const int b = max(1, min(x+xMaxCurr, h)   );
+        const int l = max(0, min(y+yMinCurr, w-1) );
+        const int r = max(1, min(y+yMaxCurr, w)   );
 
-        outData[z*w*h + x*w + y] = 
-            ( intData[b*(w+1) + r]
-            - intData[t*(w+1) + r]
-            - intData[b*(w+1) + l]
-            + intData[t*(w+1) + l])
+        double outValue = 0;
+
+        outValue += intData[b*(w+1) + r];
+        outValue -= intData[t*(w+1) + r];
+        outValue -= intData[b*(w+1) + l];
+        outValue += intData[t*(w+1) + l];
 
         // -- xMax border
-        +(intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
-            + max(1,min(y+yMaxCurr,w))]
-        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-            + max(1,min(y+yMaxCurr,w))]
-        - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
-            + max(0,min(y+yMinCurr,w-1))]
-        + intData[max(1,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr,w-1))]
-        ) * xMaxCurrFrac
+        outValue +=
+            ( intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
+                + max(1,min(y+yMaxCurr,w))]
+            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+                + max(1,min(y+yMaxCurr,w))]
+            - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y+yMinCurr,w-1))]
+            + intData[max(1,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr,w-1))]
+            ) * xMaxCurrFrac;
 
         // -- yMax border
-        +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-            + max(1,min(y+yMaxCurr+1,w))]
-        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-            + max(1,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-            + max(1,min(y+yMaxCurr+1,w))]
-        + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-            + max(1,min(y+yMaxCurr,w))]
-        ) * yMaxCurrFrac
+        outValue +=
+            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+                + max(1,min(y+yMaxCurr+1,w))]
+            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+                + max(1,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+                + max(1,min(y+yMaxCurr+1,w))]
+            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+                + max(1,min(y+yMaxCurr,w))]
+            ) * yMaxCurrFrac;
 
         // -- xMin border
-        +(intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
-            + max(1,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-            + max(1,min(y+yMaxCurr,w))]
-        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-            + max(0,min(y+yMinCurr,w-1))]
-        + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-            + max(0,min(y+yMinCurr,w-1))]
-        ) * xMinCurrFrac
+        outValue +=
+            ( intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
+                + max(1,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+                + max(1,min(y+yMaxCurr,w))]
+            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+                + max(0,min(y+yMinCurr,w-1))]
+            + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
+                + max(0,min(y+yMinCurr,w-1))]
+            ) * xMinCurrFrac;
 
         // -- yMin border
-        +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-            + max(0,min(y+yMinCurr,w-1))]
-        - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-            + max(0,min(y+yMinCurr-1,w-1))]
-        - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-            + max(0,min(y+yMinCurr,w-1))]
-        + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-            + max(0,min(y+yMinCurr-1,w-1))]
-        ) * yMinCurrFrac
+        outValue +=
+            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
+                + max(0,min(y+yMinCurr,w-1))]
+            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
+                + max(0,min(y+yMinCurr-1,w-1))]
+            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+                + max(0,min(y+yMinCurr,w-1))]
+            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
+                + max(0,min(y+yMinCurr-1,w-1))]
+            ) * yMinCurrFrac;
 
         // -- corner pixels
-        + xMaxCurrFrac*yMaxCurrFrac * (
-               (x+xMaxCurr > h-1 or
-                y+yMaxCurr > w-1 or
-                x+xMaxCurr < 0   or
-                y+yMaxCurr < 0) ? 0 :
-               inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)])
+        outValue += 
+            xMaxCurrFrac*yMaxCurrFrac * (
+               (x+xMaxCurr >  h-1 or
+                y+yMaxCurr >  w-1 or
+                x+xMaxCurr <= 0   or
+                y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMaxCurr)]);
 
-        + xMinCurrFrac*yMaxCurrFrac * (
-               (x+xMinCurr-1 > h-1 or
-                y+yMaxCurr   > w-1 or
-                x+xMinCurr-1 < 0   or
-                y+yMaxCurr   < 0) ? 0 :
-               inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)])
+        outValue +=
+            xMinCurrFrac*yMaxCurrFrac * (
+               (x+xMinCurr-1 >= h-1 or
+                y+yMaxCurr   >  w-1 or
+                x+xMinCurr-1 <  0   or
+                y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMaxCurr)]);
 
-        + xMaxCurrFrac*yMinCurrFrac * (
-               (x+xMaxCurr   > h-1 or
-                y+yMinCurr-1 > w-1 or
-                x+xMaxCurr   < 0   or
-                y+yMinCurr-1 < 0) ? 0 :
-               inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)])
+        outValue +=
+            xMaxCurrFrac*yMinCurrFrac * (
+               (x+xMaxCurr   >  h-1 or
+                y+yMinCurr-1 >= w-1 or
+                x+xMaxCurr   <= 0   or
+                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMinCurr-1)]);
 
-        + xMinCurrFrac*yMinCurrFrac * (
-               (x+xMinCurr-1 > h-1 or
-                y+yMinCurr-1 > w-1 or
-                x+xMinCurr-1 < 0   or
-                y+yMinCurr-1 < 0) ? 0 :
-               inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
+        outValue +=
+            xMinCurrFrac*yMinCurrFrac * (
+               (x+xMinCurr-1 >= h-1 or
+                y+yMinCurr-1 >= w-1 or
+                x+xMinCurr-1 <  0   or
+                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)]);
+
+        outData[z*w*h + x*w + y] = outValue;
     }
 }
 
@@ -383,32 +398,37 @@ void forwardCuda(
 }
 
 void forwardCudaNoNorm(
-    float *intData, int h, int w, int nWindows, float *outData,
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y, 
-        (nWindows + dimBlock.z - 1) / dimBlock.z);
+        (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardNoNormKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax);
+    forwardNoNormKernel <<<dimGrid, dimBlock>>> (
+        intData, outData, h, w, nInputPlane, nWindows,
+        xMin, xMax, yMin, yMax);
 }
 
 void forwardCudaNoNormFrac(
-    float *intData, int h, int w, int nWindows, float *outData,
+    float *intData, float *outData,
+    int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStride) {
+    float *inData, int inDataStrideRow, int inDataStrideChannel) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y, 
-        (nWindows + dimBlock.z - 1) / dimBlock.z);
+        (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
     forwardNoNormFracKernel <<<dimGrid, dimBlock>>> (
-        intData, outData, h, w, nWindows, 
-        xMin, xMax, yMin, yMax, inData, inDataStride);
+        intData, outData, h, w, nInputPlane, nWindows, 
+        xMin, xMax, yMin, yMax,
+        inData, inDataStrideRow, inDataStrideChannel);
 }
 
 // TODO templates for frac/non-frac
