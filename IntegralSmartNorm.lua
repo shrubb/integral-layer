@@ -325,7 +325,7 @@ do
         --     end
         -- else
             for i = 1,xMax:nElement() do
-                local minWidth = 1
+                local minWidth = 2
 
                 if xMin[i] + minWidth - 0.99 > xMax[i] then
                     local mean = 0.5 * (xMin[i] + xMax[i])
