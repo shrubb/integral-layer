@@ -642,7 +642,7 @@ do
 
             if self._type == 'torch.CudaTensor' then
                 
-                self.integralGradOutput:resize(self.nWindows, self.h, self.w)
+                self.integralGradOutput:resize(self.nWindows, self.h+1, self.w+1)
 
                 if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
                     self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
@@ -650,9 +650,9 @@ do
 
                 for inPlaneIdx = 1,self.nInputPlane do
 
-                    -- CUDA_lib.integralImageCuda(
-                    --     torch.data(gradOutput[inPlaneIdx]), torch.data(self.integralGradOutput),
-                    --     self.nWindows, self.h, self.w, self.tmpArrayGPU)
+                    CUDA_lib.integralImageCuda(
+                        torch.data(gradOutput[inPlaneIdx]), torch.data(self.integralGradOutput),
+                        self.nWindows, self.h, self.w, torch.data(self.tmpArrayGPU))
 
                     -- compute the needed integral sums
                     local updateGradInputCFunction
@@ -668,8 +668,8 @@ do
                             torch.data(self.integralGradOutput),
                             torch.data(self.gradInput[inPlaneIdx]),
                             self.h, self.w, self.nWindows,
-                            torch.data(xMin), torch.data(xMax),
-                            torch.data(yMin), torch.data(yMax),
+                            torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
+                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
                             torch.data(gradOutput[inPlaneIdx]),
                             gradOutput:stride(3), gradOutput:stride(2))
                     else
@@ -680,10 +680,10 @@ do
                         end
 
                         updateGradInputCFunction(
-                            torch.data(self.integralGradOutput), self.nWindows,
-                            self.h, self.w, torch.data(self.gradInput[inPlaneIdx]),
-                            torch.data(xMinInt), torch.data(xMaxInt),
-                            torch.data(yMinInt), torch.data(yMaxInt))
+                            torch.data(self.integralGradOutput), torch.data(self.gradInput[inPlaneIdx]),
+                            self.h, self.w, self.nWindows,
+                            torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
+                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]))
                     end
                 end
             else

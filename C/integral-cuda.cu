@@ -35,6 +35,51 @@ void _initCublasHandle() {
     cudaMemcpy(CUDA_ZERO_FLOAT, zeroOne, sizeof(zeroOne), cudaMemcpyHostToDevice);
 }
 
+// TODO remove this code
+#define CUDA_ERROR_CHECK
+
+#define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+
+inline void __cudaSafeCall( cudaError err, const char *file, const int line )
+{
+#ifdef CUDA_ERROR_CHECK
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaSafeCall() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+#endif
+
+    return;
+}
+
+inline void __cudaCheckError( const char *file, const int line )
+{
+#ifdef CUDA_ERROR_CHECK
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+#endif
+
+    return;
+}
+
 /************************ Integral image computation ************************/
 
 __global__ void accumulateRowsKernel(
@@ -56,13 +101,9 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
     accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
 
     cublasSgeam(
-        // cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, colsC, rowsC,
-        // &alpha, A, colsA,
-        // &beta, B, colsB,
-        // C, colsC
         cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
-        CUDA_ZERO_FLOAT, output, w+1,
-        CUDA_ONE_FLOAT, tmp, channels * (h+1),
+        CUDA_ONE_FLOAT, output, w+1,
+        CUDA_ZERO_FLOAT, tmp, channels * (h+1),
         tmp, channels * (h+1));
 
     int totalRows = channels * h;
@@ -72,8 +113,8 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
 
     cublasSgeam(
         cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
-        CUDA_ZERO_FLOAT, tmp, channels * (h+1),
-        CUDA_ONE_FLOAT, output, w+1,
+        CUDA_ONE_FLOAT, tmp, channels * (h+1),
+        CUDA_ZERO_FLOAT, output, w+1,
         output, w+1);
 }
 
@@ -514,8 +555,8 @@ __global__ void updateGradInputFracKernel(
 
             xMaxCurr = (int)floor(-xMin[windowIdx]) + 1;
             yMaxCurr = (int)floor(-yMin[windowIdx]) + 1;
-            const float xMaxCurrFrac = -xMin[windowIdx] - xMaxCurr;
-            const float yMaxCurrFrac = -yMin[windowIdx] - yMaxCurr;
+            const float xMaxCurrFrac = -xMin[windowIdx] + 1 - xMaxCurr;
+            const float yMaxCurrFrac = -yMin[windowIdx] + 1 - yMaxCurr;
 
             // The following code block implements these lines
             // as if they were executed simultaneously (see `void updateGradInputFrac()`):

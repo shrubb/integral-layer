@@ -4,13 +4,10 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1504623733
+-- seed = 1505142841
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
-
-local h,w = math.random(2, 400), math.random(2, 400)
-print('h, w = ' .. h .. ', ' .. w)
 
 local testType = 'corner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
@@ -20,6 +17,11 @@ if CUDA then
     require 'cunn'
 end
 
+for iter = 1,(arg[1] or 1) do
+
+h,w = math.random(2, 400), math.random(2, 400)
+print('h, w = ' .. h .. ', ' .. w)
+
 int = IntegralSmartNorm(2, 2, h, w)
 
 int.exact = true
@@ -27,7 +29,6 @@ int.smart = true
 int.replicate = true
 int.normalize = false
 
-local targetX, targetY
 if testType == 'inner' then
     targetX = math.random(2, h-1)
     targetY = math.random(2, w-1)
@@ -45,7 +46,7 @@ elseif testType == 'border' then
         targetY = math.random(2, w-1)
     end
 end
-local targetPlane = math.random(1, int.nInputPlane)
+targetPlane = math.random(1, int.nInputPlane)
 
 print('targetX, targetY, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .. targetPlane)
 
@@ -95,7 +96,7 @@ derivM = {}
 
 local k = 1
 local step = 0.1
-local innerStep = 0.004
+local innerStep = int.exact and 0.015 or 1
 
 for param = -5,5,step do
     img[{targetPlane, targetX, targetY}] = param
@@ -125,13 +126,15 @@ end
 -- loss[#loss] = nil
 -- params[#params] = nil
 -- derivM[#derivM] = nil
-
+-- 
 require 'gnuplot'
 
-if os.getenv('CUDA_VISIBLE_DEVICES') then
-    gnuplot.raw('set term postscript eps')
-    gnuplot.raw('set output \'gI-test-random.eps\'')
-end
+gnuplot.figure(iter)
+
+-- if os.getenv('CUDA_VISIBLE_DEVICES') then
+--     gnuplot.raw('set term postscript eps')
+--     gnuplot.raw('set output \'gI-test-random.eps\'')
+-- end
 
 gnuplot.plot(
     {'Loss', torch.Tensor(params), torch.Tensor(loss), '-'},
@@ -140,3 +143,5 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
+
+end -- for
