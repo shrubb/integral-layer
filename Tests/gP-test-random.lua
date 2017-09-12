@@ -9,22 +9,28 @@ print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local targetParam = 'yMin'
+local targetParam = 'xMax'
 print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
+
+local CUDA = true
+local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
+
+if CUDA then
+    require 'cunn'
+end
+
+for iter = 1,(arg[1] or 1) do
 
 local h,w = math.random(2, 100), math.random(2, 100)
 print('h, w = ' .. h .. ', ' .. w)
 
-local CUDA = false
-local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
-
-int = IntegralSmartNorm(2, 2, h, w)
+int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = true
+int.normalize = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
@@ -84,7 +90,7 @@ derivM = {}
 
 local k = 1
 local step = 0.1
-local innerStep = 0.004
+local innerStep = 0.015
 
 local lowerLimit, upperLimit
 
@@ -130,6 +136,13 @@ end
 
 require 'gnuplot'
 
+gnuplot.figure(iter)
+
+-- if os.getenv('CUDA_VISIBLE_DEVICES') then
+--     gnuplot.raw('set term postscript eps')
+--     gnuplot.raw('set output \'gI-test-random.eps\'')
+-- end
+
 gnuplot.plot(
     {'Loss', torch.Tensor(params), torch.Tensor(loss), '-'},
     {'Diff', torch.Tensor(params), torch.Tensor(deriv), '-'},
@@ -137,3 +150,5 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
+
+end -- for

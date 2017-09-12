@@ -260,7 +260,7 @@ __global__ void forwardKernel(
 }
 
 __global__ void forwardNoNormReplicateKernel(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
@@ -270,7 +270,7 @@ __global__ void forwardNoNormReplicateKernel(
 
     const int inPlaneIdx = z / nWindows;
 
-    intData += (h+1) * (w+1) * inPlaneIdx;
+    intData += intDataStrideChannel * inPlaneIdx;
 
     if (x < h and y < w and z < nInputPlane*nWindows) {
 
@@ -299,7 +299,7 @@ __global__ void forwardNoNormReplicateKernel(
 }
 
 __global__ void forwardNoNormReplicateFracKernel(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel) {
@@ -310,8 +310,8 @@ __global__ void forwardNoNormReplicateFracKernel(
 
     const int inPlaneIdx = z / nWindows;
 
-    intData += (h+1) * (w+1) * inPlaneIdx;
-    inData  += inDataStrideChannel * inPlaneIdx;
+    intData += intDataStrideChannel * inPlaneIdx;
+    inData  +=  inDataStrideChannel * inPlaneIdx;
 
     if (x < h and y < w and z < nInputPlane*nWindows) {
 
@@ -439,7 +439,7 @@ void forwardCuda(
 }
 
 void forwardCudaNoNormReplicate(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
@@ -450,12 +450,13 @@ void forwardCudaNoNormReplicate(
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
     forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
-        intData, outData, h, w, nInputPlane, nWindows,
+        intData, intDataStrideChannel, outData,
+        h, w, nInputPlane, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
 void forwardCudaNoNormReplicateFrac(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel) {
@@ -468,7 +469,8 @@ void forwardCudaNoNormReplicateFrac(
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
     forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
-        intData, outData, h, w, nInputPlane, nWindows, 
+        intData, intDataStrideChannel, outData,
+        h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
         inData, inDataStrideRow, inDataStrideChannel);
 }
@@ -865,21 +867,21 @@ __global__ void xMaxDeltaIntegralFrac(
                                 max(0,min(w-1,y+yMaxInt  ))];
 
         float delta = 0;
-        delta += brCorner * (y+yMaxInt[windowIdx] <  1 ? 1.0f : yMaxFrac[windowIdx]);
-        delta += blCorner * (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]);
+        delta += brCorner * (y+yMaxInt <  1 ? 1.0f : yMaxFrac);
+        delta += blCorner * (y+yMinInt >= w ? 1.0f : yMinFrac);
 
         delta += 
-            intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
-                + max(0,min(y+yMaxInt[windowIdx], w))];
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1) 
+                + max(0,min(y+yMaxInt, w))];
         delta -=
-            intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
-                + max(0,min(y+yMaxInt[windowIdx], w))];
+            intData[max(0,min(x+xMaxInt  , h))*(w+1) 
+                + max(0,min(y+yMaxInt, w))];
         delta -=
-            intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
-                + max(0,min(y+yMinInt[windowIdx], w))];
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1)
+                + max(0,min(y+yMinInt, w))];
         delta +=
-            intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
-                + max(0,min(y+yMinInt[windowIdx], w))];
+            intData[max(0,min(x+xMaxInt  , h))*(w+1)
+                + max(0,min(y+yMinInt, w))];
 
         tmpArray[(x-1)*w + (y-1)] *= delta;
     }

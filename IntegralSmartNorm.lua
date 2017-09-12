@@ -54,12 +54,12 @@ local C_lib = ffi.load('C/lib/libintegral-c.so')
 
 ffi.cdef [[
 void forwardCudaNoNormReplicate(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax);
 
 void forwardCudaNoNormReplicateFrac(
-    float *intData, float *outData,
+    float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel);
@@ -84,6 +84,12 @@ void backwardCudaSingleFrac(
     float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
     float *inData, int inDataStride);
+
+void backwardCudaFrac(
+    float *intData, float *tmpArray,
+    int nWindows, int h, int w,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *inData, int inDataStrideRow);
 
 void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
 void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
@@ -526,28 +532,28 @@ do
 
             if self.exact then
                 if self.replicate then
-                    forwardCFunction = CUDA_lib.forwardCudaNoNormFrac
+                    forwardCFunction = CUDA_lib.forwardCudaNoNormReplicateFrac
                 else
                     error('NYI')
                     forwardCFunction = C_lib.forwardNoNormFrac
                 end
 
                 forwardCFunction(
-                    intData, outData,
+                    intData, 0, outData,
                     self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax),
                     torch.data(self.ones), self.ones:stride(1), 0)
             else
                 if self.replicate then
-                    forwardCFunction = CUDA_lib.forwardCudaNoNorm
+                    forwardCFunction = CUDA_lib.forwardCudaNoNormReplicate
                 else
                     error('NYI')
                     forwardCFunction = C_lib.forwardNoNorm
                 end
 
                 forwardCFunction(
-                    intData, outData,
+                    intData, 0, outData,
                     self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax))
@@ -584,7 +590,7 @@ do
                 end
 
                 forwardCudaFunction(
-                    intData, outData,
+                    intData, self.integralCuda:stride(1), outData,
                     self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax),
@@ -598,27 +604,25 @@ do
                 end
 
                 forwardCudaFunction(
-                    intData, outData,
+                    intData, self.integralCuda:stride(1), outData,
                     self.h, self.w, self.nInputPlane, self.nWindows,
                     torch.data(self.xMin), torch.data(self.xMax),
                     torch.data(self.yMin), torch.data(self.yMax))
             end
+
+            self.outputNonNorm = 
+                self.outputNonNorm:view(self.nInputPlane*self.nWindows, self.h, self.w)
         end
 
         if self.normalize then
-            local outputNonNorm4D = splitFirstDim(self, self.outputNonNorm)
-            local outputOnes4D = 
-                nn.utils.addSingletonDimension(self.outputOnes):expandAs(outputNonNorm4D)
-            
             -- divide elementwise to get normalized box filter maps
-            self.output = self.cdiv:forward {outputNonNorm4D, outputOnes4D}
-            self.output = flattenFirstDims(self, self.output)
+            self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
         else
             self.output = self.outputNonNorm
         end
-
-        self._backwardDone = false
         
+        self._backwardDone = false
+
         return self.output
     end
 
@@ -877,7 +881,7 @@ do
                     error('NYI')
                 end
 
-                for inPlaneIdx = 1,self.nInputPlane
+                for inPlaneIdx = 1,self.nInputPlane do
                     local inData, inStrideRow, inStrideChannel
                     if k == 1 then
                         inData = torch.data(input[inPlaneIdx])
@@ -917,7 +921,7 @@ do
                     error('NYI')
                 end
 
-                for inPlaneIdx = 1,self.nInputPlane
+                for inPlaneIdx = 1,self.nInputPlane do
                     self.tmpArrayGPU:copy(
                         gradOutput[{{inPlaneIdx, inPlaneIdx}}]
                             :expand(4, self.nWindows, self.h * self.w))
