@@ -486,21 +486,6 @@ void updateGradInputFrac(
                 l = max(0, min(y+yMinCurr, w) );
                 r = max(0, min(y+yMaxCurr, w) );
 
-                // if (x == 1 and y == 1) {
-                //     std::cout << "gradInput[x*w + y] += " << std::endl;
-                //     std::cout << "+ gradOutputInt[b*(w+1) + r] = " << gradOutputInt[b*(w+1) + r] << std::endl;
-                //     std::cout << "- gradOutputInt[t*(w+1) + r] = " << gradOutputInt[t*(w+1) + r] << std::endl;
-                //     std::cout << "- gradOutputInt[b*(w+1) + l] = " << gradOutputInt[b*(w+1) + l] << std::endl;
-                //     std::cout << "+ gradOutputInt[t*(w+1) + l] = " << gradOutputInt[t*(w+1) + l] << std::endl;
-
-                //     std::cout << "adding xMax border:" << std::endl;
-                //     std::cout << "+gradOutputInt[" << max(0,min(x+xMaxCurr+1,h)) << "," << max(0,min(y+yMaxCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr+1,h))*(w+1) + max(0,min(y+yMaxCurr,w))] << std::endl;
-                //     std::cout << "-gradOutputInt[" << max(0,min(x+xMaxCurr,h)) << "," << max(0,min(y+yMaxCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1) + max(0,min(y+yMaxCurr,w))] << std::endl;
-                //     std::cout << "-gradOutputInt[" << max(0,min(x+xMaxCurr+1,h)) << "," << max(0,min(y+yMinCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr+1,h))*(w+1) + max(0,min(y+yMinCurr,w))] << std::endl;
-                //     std::cout << "+gradOutputInt[" << max(0,min(x+xMaxCurr,h)) << "," << max(0,min(y+yMinCurr,w)) << "] = " << gradOutputInt[max(0,min(x+xMaxCurr,h))*(w+1) + max(0,min(y+yMinCurr,w))] << std::endl;
-                //     std::cout << "* xMaxFrac[windowIdx] = " << xMaxFrac[windowIdx] << std::endl;
-                // }
-
                 gradInput[x*w + y] += 
                     ( gradOutputInt[b*(w+1) + r]
                     - gradOutputInt[t*(w+1) + r]
@@ -720,11 +705,6 @@ void backwardNoNormFrac(
                                     max(0,min(w-1,y+yMaxInt[windowIdx]  ))];
 
                 if (x+xMaxInt[windowIdx] >= 1 and x+xMaxInt[windowIdx] < h) {
-                    // std::cout << "xMin = " << x+xMinInt[windowIdx] << std::endl;
-                    // std::cout << "xMax = " << x+xMaxInt[windowIdx] << std::endl;
-                    // std::cout << "yMin = " << y+yMinInt[windowIdx] << std::endl;
-                    // std::cout << "yMax = " << y+yMaxInt[windowIdx] << std::endl;
-
                     xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
                             + max(0,min(y+yMaxInt[windowIdx], w))]
@@ -736,19 +716,6 @@ void backwardNoNormFrac(
                             + max(0,min(y+yMinInt[windowIdx], w))]
                         + brCorner * (y+yMaxInt[windowIdx] <  1 ? 1.0f : yMaxFrac[windowIdx])
                         + blCorner * (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]));
-
-                    // std::cout << "x,y = " << x << "," << y << ":" << std::endl;
-                    // std::cout << xMaxDelta << " += " << gradOutData[(x-1)*w + (y-1)] << " * (" <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
-                    //         + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
-                    //         + max(0,min(y+yMaxInt[windowIdx], w))] << " - " <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
-                    //         + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
-                    //     intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
-                    //         + max(0,min(y+yMinInt[windowIdx], w))] << " + " <<
-                    //     (brCorner) << "*" << (y+yMaxInt[windowIdx] <  1 ? 1.0f : yMaxFrac[windowIdx]) << " + " <<
-                    //     (blCorner) << "*" << (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]) << ")\n";
                 }
 
                 if (x+xMinInt[windowIdx] >= 1 and x+xMinInt[windowIdx] < h) {

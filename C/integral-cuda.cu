@@ -460,6 +460,7 @@ void forwardCudaNoNormReplicateFrac(
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel) {
 
+    // TODO: 1D grid
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
         (h + dimBlock.x - 1) / dimBlock.x, 
@@ -582,6 +583,7 @@ __global__ void updateGradInputFracKernel(
             const int l = max(0, min(y+yMinCurr, w) );
             const int r = max(0, min(y+yMaxCurr, w) );
 
+            // TODO: 1D grid
             outValue += gradOutputIntData[b*(w+1) + r];
             outValue -= gradOutputIntData[t*(w+1) + r];
             outValue -= gradOutputIntData[b*(w+1) + l];
@@ -829,34 +831,57 @@ void backwardCudaSingle(
 }
 
 __global__ void xMaxDeltaIntegralFrac(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride) {
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow) {
+ 
+    int id = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int & windowIdx = id;
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
+    if (windowIdx < nWindows and x <= h and y <= w) {
 
-    if (x <= h and y <= w) {
+        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
+        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
 
-        float blCorner = (x+xMaxCurr > h or y+yMinCurr > w or
-                          x+xMaxCurr < 1 or y+yMinCurr < 1) ? 0 :
-                          inData[(x+xMaxCurr-1)*inDataStride + (y+yMinCurr-1)];
-        float brCorner = (x+xMaxCurr > h or y+yMaxCurr > w or
-                          x+xMaxCurr < 1 or y+yMaxCurr < 1) ? 0 :
-                          inData[(x+xMaxCurr-1)*inDataStride + (y+yMaxCurr-1)];
+        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
+        const float yMinFrac = yMinInt-yMin[windowIdx]+1;
 
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr  , h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMaxCurr  , h))*(w+1)
-                + max(0,min(y+yMinCurr, w))]
-            + intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + max(0,min(y+yMinCurr, w))]
-            + brCorner * yMaxCurrFrac
-            + blCorner * yMinCurrFrac);
+        const int xMaxInt = (int)floor(xMax[windowIdx]);
+        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]);
+        const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+
+        const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+        delta += brCorner * (y+yMaxInt[windowIdx] <  1 ? 1.0f : yMaxFrac[windowIdx]);
+        delta += blCorner * (y+yMinInt[windowIdx] >= w ? 1.0f : yMinFrac[windowIdx]);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
+                + max(0,min(y+yMaxInt[windowIdx], w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
+                + max(0,min(y+yMaxInt[windowIdx], w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
+                + max(0,min(y+yMinInt[windowIdx], w))];
+        delta +=
+            intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
+                + max(0,min(y+yMinInt[windowIdx], w))];
+
+        tmpArray[(x-1)*w + (y-1)] *= delta;
     }
 }
 
@@ -956,46 +981,34 @@ __global__ void yMinDeltaIntegralFrac(
     }
 }
 
-// TODO need general kernels instead of `single`
-void backwardCudaSingleFrac(
-    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
-    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride) {
+void backwardCudaFrac(
+    float *intData, float *tmpArray,
+    int nWindows, int h, int w,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    float *inData, int inDataStrideRow) {
 
-    // `deltas` is a device pointer
+    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE * BLOCK_CHANNELS);
+    dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y);
-
-    dim3 dimBlock1D(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid1D((h*w + dimBlock1D.x - 1) / dimBlock1D.x);
-
-    // xMaxDelta
-    xMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-        intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-        yMinCurrFrac, yMaxCurrFrac, inData, inDataStride);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+1);
+    // // xMaxDelta
+    // xMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+    //     intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
+    //     xMin, xMax, yMin, yMax, inData, inDataStride);
     
-    // xMinDelta
-    xMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-        intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-        yMinCurrFrac, yMaxCurrFrac, inData, inDataStride);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+0);
+    // // xMinDelta
+    // xMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+    //     intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
+    //     xMin, xMax, yMin, yMax, inData, inDataStride);
 
-    // yMaxDelta
-    yMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-        intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-        xMinCurrFrac, xMaxCurrFrac, inData, inDataStride);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+3);
+    // // yMaxDelta
+    // yMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+    //     intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
+    //     xMin, xMax, yMin, yMax, inData, inDataStride);
 
-    // yMinDelta
-    yMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-        intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-        xMinCurrFrac, xMaxCurrFrac, inData, inDataStride);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+2);
-
-    // cudaDeviceSynchronize();
+    // // yMinDelta
+    // yMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+    //     intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
+    //     xMin, xMax, yMin, yMax, inData, inDataStride);
 }
 
 } // extern "C"
