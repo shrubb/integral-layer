@@ -331,7 +331,7 @@ do
         --     end
         -- else
             for i = 1,xMax:nElement() do
-                local minWidth = 2
+                local minWidth = self.exact and 1 or 2
 
                 if xMin[i] + minWidth - 0.99 > xMax[i] then
                     local mean = 0.5 * (xMin[i] + xMax[i])
@@ -504,7 +504,7 @@ do
     end
 
     function updateOutputGPU(self, input)
-        dirtyFixWindows(self)
+        dirtyFixWindows(self) -- TODO: rewrite in CUDA
 
         if input:nDimension() == 2 then
             input = nn.utils.addSingletonDimension(input)
@@ -516,6 +516,7 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
+
             assert(self.outputOnes:stride(2) == self.w) -- for C function safety
 
             local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
@@ -620,7 +621,7 @@ do
         else
             self.output = self.outputNonNorm
         end
-        
+
         self._backwardDone = false
 
         return self.output
@@ -855,7 +856,7 @@ do
             input = nn.utils.addSingletonDimension(input)
         end
 
-        assert(self.integralCuda:stride(2) == w+1)
+        assert(self.integralCuda:stride(2) == self.w+1)
 
         self.tmpArrayGPU   :resize(4, self.nWindows, self.h * self.w)
         self.tmpArraySumGPU:resize(4, self.nWindows)
@@ -866,10 +867,7 @@ do
             local gradOutput = self.normalize and self.cdiv.gradInput[k] or gradOutput
             gradOutput = gradOutput:view(self.nInputPlane, self.nWindows, self.h * self.w)
 
-            assert(gradOutput:stride(gradOutput:nDimension()-1) == self.w) -- for C function
-
             local gradOutData = torch.data(gradOutput)
-            local intData = torch.data(k == 1 and self.integralCuda or self.onesIntegral)
             local intStrideChannel = k == 1 and self.integralCuda:stride(1) or 0
 
             local accGradParametersCFunction
@@ -882,6 +880,8 @@ do
                 end
 
                 for inPlaneIdx = 1,self.nInputPlane do
+                    local intData = torch.data(k == 1 and self.integralCuda[inPlaneIdx] or self.onesIntegral)
+
                     local inData, inStrideRow, inStrideChannel
                     if k == 1 then
                         inData = torch.data(input[inPlaneIdx])
@@ -909,10 +909,10 @@ do
 
                     torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
-                    torch.add(self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
-                    torch.add(self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
-                    torch.add(self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
-                    torch.add(self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
+                    torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
+                    torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
+                    torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
+                    torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
                 end
             else
                 if self.replicate then

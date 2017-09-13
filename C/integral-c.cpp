@@ -20,7 +20,7 @@ void forward(
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
+    // #pragma omp parallel for private(t,b,l,r)
     for (int x = 0; x < h; ++x) {
         for (int y = 0; y < w; ++y) {
 
@@ -47,7 +47,7 @@ void backward(
     float yMaxDelta = 0;
     float yMinDelta = 0;
 
-    #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
+    // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
     for (int x = 1; x <= h; ++x) {
         for (int y = 1; y <= w; ++y) {
             
@@ -304,7 +304,7 @@ void forwardNoNorm(
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
+    // #pragma omp parallel for private(t,b,l,r)
     for (int x = 0; x < h; ++x) {
         for (int y = 0; y < w; ++y) {
 
@@ -330,7 +330,7 @@ void forwardNoNormFrac(
 
     int t, b, l, r;
 
-    #pragma omp parallel for private(t,b,l,r)
+    // #pragma omp parallel for private(t,b,l,r)
     for (int x = 0; x < h; ++x) {
         for (int y = 0; y < w; ++y) {
 

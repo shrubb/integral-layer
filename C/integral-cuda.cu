@@ -304,9 +304,10 @@ __global__ void forwardNoNormReplicateFracKernel(
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel) {
 
-    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    const int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = id % w; id /= w;
+    const int x = id % h; id /= h;
+    const int & z = id;
 
     const int inPlaneIdx = z / nWindows;
 
@@ -443,6 +444,7 @@ void forwardCudaNoNormReplicate(
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
 
+    // TODO: 1D grid
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
         (h + dimBlock.x - 1) / dimBlock.x, 
@@ -461,12 +463,8 @@ void forwardCudaNoNormReplicateFrac(
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel) {
 
-    // TODO: 1D grid
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
-    dim3 dimGrid(
-        (h + dimBlock.x - 1) / dimBlock.x, 
-        (w + dimBlock.y - 1) / dimBlock.y, 
-        (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
+    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
+    dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
 
     forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
@@ -835,151 +833,268 @@ void backwardCudaSingle(
 __global__ void xMaxDeltaIntegralFrac(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *xMax, const float *yMin, const float *yMax,
     const float *inData, const int inDataStrideRow) {
  
-    int id = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
     const int x = id % h + 1; id /= h; // 1-indexed
     const int & windowIdx = id;
 
     if (windowIdx < nWindows and x <= h and y <= w) {
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
-        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
+        tmpArray += windowIdx * h * w;
+
+        // const int xMinInt = (int)ceil(xMin[windowIdx]-1);
+        // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
 
         const int yMinInt = (int)ceil(yMin[windowIdx]-1);
         const float yMinFrac = yMinInt-yMin[windowIdx]+1;
 
         const int xMaxInt = (int)floor(xMax[windowIdx]);
-        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+        // const float xMaxFrac = xMax[windowIdx]-xMaxInt;
 
         const int yMaxInt = (int)floor(yMax[windowIdx]);
         const float yMaxFrac = yMax[windowIdx]-yMaxInt;
 
+        // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
         const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
                             inData[
                                 max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
                                 max(0,min(w-1,y+yMinInt-1))];
+        // const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
         const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
                             inData[
                                 max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
                                 max(0,min(w-1,y+yMaxInt  ))];
 
         float delta = 0;
+
         delta += brCorner * (y+yMaxInt <  1 ? 1.0f : yMaxFrac);
         delta += blCorner * (y+yMinInt >= w ? 1.0f : yMinFrac);
 
         delta += 
             intData[max(0,min(x+xMaxInt+1, h))*(w+1) 
-                + max(0,min(y+yMaxInt, w))];
+                  + max(0,min(y+yMaxInt, w))];
         delta -=
             intData[max(0,min(x+xMaxInt  , h))*(w+1) 
-                + max(0,min(y+yMaxInt, w))];
+                  + max(0,min(y+yMaxInt, w))];
         delta -=
             intData[max(0,min(x+xMaxInt+1, h))*(w+1)
-                + max(0,min(y+yMinInt, w))];
+                  + max(0,min(y+yMinInt, w))];
         delta +=
             intData[max(0,min(x+xMaxInt  , h))*(w+1)
-                + max(0,min(y+yMinInt, w))];
+                  + max(0,min(y+yMinInt, w))];
 
+        delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
         tmpArray[(x-1)*w + (y-1)] *= delta;
     }
 }
 
 __global__ void xMinDeltaIntegralFrac(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride) {
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float *xMin, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int & windowIdx = id;
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
+    if (windowIdx < nWindows and x <= h and y <= w) {
 
-    if (x <= h and y <= w) {
+        tmpArray += windowIdx * h * w;
 
-        float tlCorner = (x+xMinCurr > h or y+yMinCurr > w or 
-                          x+xMinCurr < 1 or y+yMinCurr < 1) ? 0 :
-                          inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)];
-        float trCorner = (x+xMinCurr > h or y+yMaxCurr > w or
-                          x+xMinCurr < 1 or y+yMaxCurr < 1) ? 0 :
-                          inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr-1)];
+        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
+        // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
 
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMinCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[min(h,max(x+xMinCurr  , 0))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMinCurr-1, h))*(w+1)
-                + max(0,min(y+yMinCurr  , w))]
-            + intData[min(h,max(x+xMinCurr  , 0))*(w+1)
-                + max(0,min(y+yMinCurr  , w))]
-            + trCorner * yMaxCurrFrac
-            + tlCorner * yMinCurrFrac);
+        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
+        const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+
+        // const int xMaxInt = (int)floor(xMax[windowIdx]);
+        // const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]);
+        const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+
+        const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        // const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+        // const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += trCorner * (y+yMaxInt <  1 ? 1.0f : yMaxFrac);
+        delta += tlCorner * (y+yMinInt >= w ? 1.0f : yMinFrac);
+
+        delta += 
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+
+        delta *= (x+xMinInt >= 1 and x+xMinInt < h);
+        tmpArray[(x-1)*w + (y-1)] *= -delta;
     }
 }
 
 __global__ void yMaxDeltaIntegralFrac(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac,
-    float *inData, int inDataStride) {
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMax,
+    const float *inData, const int inDataStrideRow) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int & windowIdx = id;
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
+    if (windowIdx < nWindows and x <= h and y <= w) {
 
-    if (x <= h and y <= w) {
+        tmpArray += windowIdx * h * w;
 
-        float trCorner = (x+xMinCurr > h or y+yMaxCurr > w or
-                          x+xMinCurr < 1 or y+yMaxCurr < 1) ? 0 :
-                          inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr-1)];
-        float brCorner = (x+xMaxCurr > h or y+yMaxCurr > w or
-                          x+xMaxCurr < 1 or y+yMaxCurr < 1) ? 0 :
-                          inData[(x+xMaxCurr-1)*inDataStride + (y+yMaxCurr-1)];
+        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
+        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
 
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMinCurr,h))*(w+1)
-                + max(0,min(y+yMaxCurr,w))]
-            + intData[max(0,min(x+xMinCurr,h))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]
-            + trCorner * xMinCurrFrac
-            + brCorner * xMaxCurrFrac);
+        // const int yMinInt = (int)ceil(yMin[windowIdx]-1);
+        // const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+
+        const int xMaxInt = (int)floor(xMax[windowIdx]);
+        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]);
+        // const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+
+        // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        // const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+        const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += trCorner * (x+xMinInt >= h ? 1.0f : xMinFrac);
+        delta += brCorner * (x+xMaxInt <  1 ? 1.0f : xMaxFrac);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+
+        delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
+        tmpArray[(x-1)*w + (y-1)] *= delta;
     }
 }
 
 __global__ void yMinDeltaIntegralFrac(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac,
-    float *inData, int inDataStride) {
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin,
+    const float *inData, const int inDataStrideRow) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int & windowIdx = id;
 
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
+    if (windowIdx < nWindows and x <= h and y <= w) {
 
-    if (x <= h and y <= w) {
+        tmpArray += windowIdx * h * w;
 
-        float tlCorner = (x+xMinCurr > h or y+yMinCurr > w or 
-                          x+xMinCurr < 1 or y+yMinCurr < 1) ? 0 :
-                          inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)];
-        float blCorner = (x+xMaxCurr > h or y+yMinCurr > w or
-                          x+xMaxCurr < 1 or y+yMinCurr < 1) ? 0 :
-                          inData[(x+xMaxCurr-1)*inDataStride + (y+yMinCurr-1)];
+        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
+        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
 
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMinCurr-1,w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + min(w,max(y+yMinCurr, 0))]
-            - intData[max(0,min(x+xMinCurr  , h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w))]
-            + intData[max(0,min(x+xMinCurr  , h))*(w+1)
-                + min(w,max(y+yMinCurr, 0))]
-            + tlCorner * xMinCurrFrac
-            + blCorner * xMaxCurrFrac);
+        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
+        // const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+
+        const int xMaxInt = (int)floor(xMax[windowIdx]);
+        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+
+        // const int yMaxInt = (int)floor(yMax[windowIdx]);
+        // const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+
+        const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        // const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+        // const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += tlCorner * (x+xMinInt >= h ? 1.0f : xMinFrac);
+        delta += blCorner * (x+xMaxInt <  1 ? 1.0f : xMaxFrac);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+
+        delta *= (y+yMinInt >= 1 and y+yMinInt < w);
+        tmpArray[(x-1)*w + (y-1)] *= -delta;
     }
 }
 
@@ -989,28 +1104,24 @@ void backwardCudaFrac(
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow) {
 
-    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE * BLOCK_CHANNELS);
+    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    // // xMaxDelta
-    // xMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-    //     intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
-    //     xMin, xMax, yMin, yMax, inData, inDataStride);
-    
-    // // xMinDelta
-    // xMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-    //     intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
-    //     xMin, xMax, yMin, yMax, inData, inDataStride);
+    xMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+        intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
+        xMax, yMin, yMax, inData, inDataStrideRow);
 
-    // // yMaxDelta
-    // yMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-    //     intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
-    //     xMin, xMax, yMin, yMax, inData, inDataStride);
+    xMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+        intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
+        xMin, yMin, yMax, inData, inDataStrideRow);
 
-    // // yMinDelta
-    // yMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
-    //     intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
-    //     xMin, xMax, yMin, yMax, inData, inDataStride);
+    yMaxDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+        intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
+        xMin, xMax, yMax, inData, inDataStrideRow);
+
+    yMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
+        intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
+        xMin, xMax, yMin, inData, inDataStrideRow);
 }
 
 } // extern "C"

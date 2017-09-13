@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1504693562
+-- seed = 101
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -22,7 +22,7 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-local h,w = math.random(2, 100), math.random(2, 100)
+local h,w = math.random(2, 400), math.random(2, 400)
 print('h, w = ' .. h .. ', ' .. w)
 
 int = IntegralSmartNorm(2, 2, h, w):type(dtype)
@@ -30,7 +30,7 @@ int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
@@ -82,6 +82,7 @@ gradOutput = crit:updateGradInput(int.output, target)
 
 int:zeroGradParameters()
 int:backward(img, gradOutput)
+-- do return end
 
 params = {}
 loss = {}
@@ -103,10 +104,11 @@ else
     innerStep = -innerStep
 end
 
+timer = torch.Timer()
 for param = lowerLimit,upperLimit,step do
     int[targetParam][paramPlane][paramWin] = param
     pred = int:forward(img)
-
+---[[
     if int[targetParam][paramPlane][paramWin] == tonumber(ffi.new('float', param)) then
         params[k] = param
         loss[k] = crit:forward(pred, target)
@@ -128,7 +130,10 @@ for param = lowerLimit,upperLimit,step do
         
         k = k + 1
     end
+    --]]
 end
+if CUDA then cutorch.synchronize() end
+print(timer:time().real .. ' seconds')
 
 -- loss[#loss] = nil
 -- params[#params] = nil
