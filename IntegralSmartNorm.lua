@@ -94,6 +94,10 @@ void backwardCudaFrac(
 void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
 void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
 
+void dirtyFixWindows(
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int size, int h, int w, float minWidth);
+
 void _initCublasHandle(); ]]
 
 local CUDA_lib
@@ -504,7 +508,10 @@ do
     end
 
     function updateOutputGPU(self, input)
-        dirtyFixWindows(self) -- TODO: rewrite in CUDA
+        CUDA_lib.dirtyFixWindows(
+            torch.data(self.xMin), torch.data(self.xMax),
+            torch.data(self.yMin), torch.data(self.yMax),
+            self.xMin:nElement(), self.h, self.w, 2)
 
         if input:nDimension() == 2 then
             input = nn.utils.addSingletonDimension(input)

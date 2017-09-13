@@ -715,121 +715,6 @@ void updateGradInputCudaFrac(
 
 /************************ accGradParameters ************************/
 
-// TODO templates for frac/non-frac
-
-__global__ void xMaxDeltaIntegral(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
-
-    if (x <= h and y <= w) {
-
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr  , h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMaxCurr  , h))*(w+1)
-                + max(0,min(y+yMinCurr, w))]
-            + intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + max(0,min(y+yMinCurr, w))]);
-    }
-}
-
-__global__ void xMinDeltaIntegral(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
-
-    if (x <= h and y <= w) {
-
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMinCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[min(h,max(x+xMinCurr  , 0))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMinCurr-1, h))*(w+1)
-                + max(0,min(y+yMinCurr  , w))]
-            + intData[min(h,max(x+xMinCurr  , 0))*(w+1)
-                + max(0,min(y+yMinCurr  , w))]);
-    }
-}
-
-__global__ void yMaxDeltaIntegral(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
-
-    if (x <= h and y <= w) {
-
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]
-            - intData[max(0,min(x+xMinCurr,h))*(w+1)
-                + max(0,min(y+yMaxCurr,w))]
-            + intData[max(0,min(x+xMinCurr,h))*(w+1)
-                + max(0,min(y+yMaxCurr-1, w))]);
-    }
-}
-
-__global__ void yMinDeltaIntegral(
-    float *intData, float *tmpArray, int h, int w,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x + 1;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y + 1;
-
-    if (x <= h and y <= w) {
-
-        tmpArray[(x-1)*w + (y-1)] = 
-            ( intData[max(0,min(x+xMaxCurr-1, h))*(w+1) 
-                + max(0,min(y+yMinCurr-1,w))]
-            - intData[max(0,min(x+xMaxCurr-1, h))*(w+1)
-                + min(w,max(y+yMinCurr, 0))]
-            - intData[max(0,min(x+xMinCurr  , h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w))]
-            + intData[max(0,min(x+xMinCurr  , h))*(w+1)
-                + min(w,max(y+yMinCurr, 0))]);
-    }
-}
-
-void backwardCudaSingle(
-    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
-    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
-
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y);
-
-    dim3 dimBlock1D(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid1D((h*w + dimBlock1D.x - 1) / dimBlock1D.x);
-
-    // xMaxDelta
-    xMaxDeltaIntegral <<<dimGrid, dimBlock>>> (intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+1);
-
-    // xMinDelta
-    xMinDeltaIntegral <<<dimGrid, dimBlock>>> (intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+0);
-
-    // yMaxDelta
-    yMaxDeltaIntegral <<<dimGrid, dimBlock>>> (intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+3);
-
-    // yMinDelta
-    yMinDeltaIntegral <<<dimGrid, dimBlock>>> (intData, tmpArray, h, w, xMinCurr, xMaxCurr, yMinCurr, yMaxCurr);
-    cublasSdot(cublasHandle, h*w, tmpArray, 1, gradOutData, 1, deltas+2);
-
-    // cudaDeviceSynchronize();
-}
-
 __global__ void xMaxDeltaIntegralFrac(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
@@ -1122,6 +1007,57 @@ void backwardCudaFrac(
     yMinDeltaIntegralFrac <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow);
+}
+
+/************************ Other stuff ************************/
+
+__global__ void dirtyFixWindowsKernel(
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    const int size, const float h, const float w, const float minWidth) {
+
+    int idx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+
+    if (idx < 2*size) {
+        float paramMin, paramMax;
+
+        if (idx < size) {
+            paramMin = max(-h+1, min(h-1, xMin[idx]));
+            paramMax = max(-h+1, min(h-1, xMax[idx]));
+
+            if (paramMin + minWidth - 0.99 > paramMax) {
+                const float mean = 0.5 * (paramMin + paramMax);
+                paramMin = mean - 0.5 * (minWidth - 0.9);
+                paramMax = mean + 0.5 * (minWidth - 0.9);
+            }
+
+            xMin[idx] = paramMin;
+            xMax[idx] = paramMax;
+        } else {
+            idx -= size;
+            paramMin = max(-w+1, min(w-1, yMin[idx]));
+            paramMax = max(-w+1, min(w-1, yMax[idx]));
+
+            if (paramMin + minWidth - 0.99 > paramMax) {
+                const float mean = 0.5 * (paramMin + paramMax);
+                paramMin = mean - 0.5 * (minWidth - 0.9);
+                paramMax = mean + 0.5 * (minWidth - 0.9);
+            }
+
+            yMin[idx] = paramMin;
+            yMax[idx] = paramMax;
+        }
+    }
+}
+
+void dirtyFixWindows(
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int size, int h, int w, float minWidth) {
+
+    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
+    dim3 dimGrid((2*size + dimBlock.x - 1) / dimBlock.x);
+
+    dirtyFixWindowsKernel <<<dimGrid, dimBlock>>> (
+        xMin, xMax, yMin, yMax, size, (float)h, (float)w, minWidth);
 }
 
 } // extern "C"

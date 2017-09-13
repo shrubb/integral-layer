@@ -30,7 +30,7 @@ int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = true
+int.normalize = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
@@ -104,6 +104,13 @@ else
     innerStep = -innerStep
 end
 
+-- GPU forward:
+-- 1.4277069568634 total
+-- 0.04 indexing, resizing
+-- 0.032776079177856 dirtyFix
+-- 0.74985118865967 integral
+-- 0.55207582473755 Cfunc
+
 timer = torch.Timer()
 for param = lowerLimit,upperLimit,step do
     int[targetParam][paramPlane][paramWin] = param
@@ -138,7 +145,7 @@ print(timer:time().real .. ' seconds')
 -- loss[#loss] = nil
 -- params[#params] = nil
 -- derivM[#derivM] = nil
-
+---[[
 require 'gnuplot'
 
 gnuplot.figure(iter)
@@ -155,5 +162,6 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
+--]]
 
 end -- for
