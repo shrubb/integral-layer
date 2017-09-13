@@ -600,9 +600,9 @@ void backwardNoNorm(
                 
                 if (x+xMaxInt[windowIdx] >= 1 and x+xMaxInt[windowIdx] < h) {
                     xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
-                        ( intData[max(1,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
+                        ( intData[max(1,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx], w))]
-                        - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
+                        - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(1,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx], w))]
