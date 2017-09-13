@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 101
+seed = 1505317045
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -13,7 +13,7 @@ local targetParam = 'xMax'
 print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
 
-local CUDA = true
+local CUDA = false
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
 if CUDA then
@@ -27,7 +27,7 @@ print('h, w = ' .. h .. ', ' .. w)
 
 int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 
-int.exact = true
+int.exact = false
 int.smart = true
 int.replicate = true
 int.normalize = false
@@ -40,7 +40,7 @@ local paramPlane, paramWin = math.random(1,int.nInputPlane), math.random(1,int.n
 print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)
 
 local function rand(a,b)
-	return torch.rand(1)[1] * (b-a) + a
+    return torch.rand(1)[1] * (b-a) + a
 end
 
 for planeIdx = 1,int.nInputPlane do
@@ -61,6 +61,7 @@ for planeIdx = 1,int.nInputPlane do
     end
 end
 
+if iter == 7 then
 initialParam = int[targetParam][paramPlane][paramWin]
 
 local paramsBefore = {}
@@ -91,7 +92,7 @@ derivM = {}
 
 local k = 1
 local step = 0.1
-local innerStep = 0.015
+local innerStep = int.exact and 0.015 or 1
 
 local lowerLimit, upperLimit
 
@@ -163,5 +164,5 @@ gnuplot.plot(
 
 gnuplot.grid(true)
 --]]
-
+end -- if
 end -- for

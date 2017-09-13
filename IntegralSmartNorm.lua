@@ -75,15 +75,10 @@ void updateGradInputCudaFrac(
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel);
 
-void backwardCudaSingle(
-    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
-    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
-
-void backwardCudaSingleFrac(
-    float *intData, float *gradOutData, float *tmpArray, float *tmpArraySum, int h, int w, 
-    float *deltas, int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride);
+void backwardCuda(
+    float *intData, float *tmpArray,
+    int nWindows, int h, int w,
+    float *xMin, float *xMax, float *yMin, float *yMax);
 
 void backwardCudaFrac(
     float *intData, float *tmpArray,
@@ -511,7 +506,7 @@ do
         CUDA_lib.dirtyFixWindows(
             torch.data(self.xMin), torch.data(self.xMax),
             torch.data(self.yMin), torch.data(self.yMax),
-            self.xMin:nElement(), self.h, self.w, 2)
+            self.xMin:nElement(), self.h, self.w, self.exact and 1 or 2)
 
         if input:nDimension() == 2 then
             input = nn.utils.addSingletonDimension(input)
@@ -768,6 +763,8 @@ do
     end
 
     function accGradParametersCPU(self, input, gradOutput, scale)
+        scale = scale or 1
+
         if self.normalize then
             if not self._backwardDone then
                 self.cdiv:updateGradInput({self.outputNonNorm, self.outputOnes}, gradOutput)
@@ -850,6 +847,7 @@ do
     end
 
     function accGradParametersGPU(self, input, gradOutput, scale)
+        scale = scale or 1
         
         if self.normalize then
             if not self._backwardDone then
@@ -929,23 +927,25 @@ do
                 end
 
                 for inPlaneIdx = 1,self.nInputPlane do
+                    local intData = torch.data(k == 1 and self.integralCuda[inPlaneIdx] or self.onesIntegral)
+
                     self.tmpArrayGPU:copy(
                         gradOutput[{{inPlaneIdx, inPlaneIdx}}]
                             :expand(4, self.nWindows, self.h * self.w))
 
+                    -- multiplies `self.tmpArrayGPU` by parameter deltas
                     accGradParametersCFunction(
-                        intData, gradOutData, scale,
-                        torch.data(self.tmpArrayGPU),
+                        intData, torch.data(self.tmpArrayGPU),
                         self.nWindows, self.h, self.w,
-                        torch.data(xMin), torch.data(xMax),
-                        torch.data(yMin), torch.data(yMax))
+                        torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
+                        torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]))
 
                     torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
-                    torch.add(self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
-                    torch.add(self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
-                    torch.add(self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
-                    torch.add(self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
+                    torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
+                    torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
+                    torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
+                    torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
                 end
             end
         end

@@ -1126,7 +1126,7 @@ __global__ void yMaxDeltaIntegralKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralFrac(
+__global__ void yMinDeltaIntegralKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin) {
