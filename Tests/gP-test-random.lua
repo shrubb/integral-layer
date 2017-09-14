@@ -22,7 +22,7 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-local h,w = math.random(2, 400), math.random(2, 400)
+local h,w = math.random(2, 100), math.random(2, 100)
 print('h, w = ' .. h .. ', ' .. w)
 
 int = IntegralSmartNorm(2, 2, h, w):type(dtype)
@@ -30,7 +30,7 @@ int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 int.exact = false
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
@@ -61,7 +61,7 @@ for planeIdx = 1,int.nInputPlane do
     end
 end
 
-if iter == 7 then
+if true or iter == 7 then
 initialParam = int[targetParam][paramPlane][paramWin]
 
 local paramsBefore = {}

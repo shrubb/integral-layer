@@ -9,8 +9,8 @@ print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'inner' -- 'corner' | 'border' | 'inner'
-local CUDA = true
+local testType = 'border' -- 'corner' | 'border' | 'inner'
+local CUDA = false
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
 if CUDA then
@@ -27,7 +27,7 @@ int = IntegralSmartNorm(2, 2, h, w)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
 
 if testType == 'inner' then
     targetX = math.random(2, h-1)
@@ -55,6 +55,9 @@ crit = nn.MSECriterion():type(dtype)
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
 target = torch.rand(int.nInputPlane*int.nWindows, h, w):add(-0.5):mul(0.1):type(dtype)
 
+-- img = nn.utils.addSingletonDimension(img)
+-- target = nn.utils.addSingletonDimension(target)
+
 local function rand(a,b)
 	return torch.rand(1)[1] * (b-a) + a
 end
@@ -80,7 +83,7 @@ end
 int:type(dtype)
 
 int:forward(img)
-
+print(int.output:size())
 target:add(int.output)
 
 loss = crit:forward(int.output, target)
@@ -88,6 +91,7 @@ gradOutput = crit:updateGradInput(int.output, target)
 
 int:zeroGradParameters()
 int:updateGradInput(img, gradOutput) -- backward
+print(int.gradInput:size())
 
 params = {}
 loss = {}
