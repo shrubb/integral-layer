@@ -5,13 +5,18 @@ require 'cv.imgproc'
 local WindowDebugger = torch.class('WindowDebugger')
 
 do
+    -- `self.h` is just a wrapper over all useful data
     function WindowDebugger:__init(path)
         if path then
-            self.h = torch.load(path)
+            self:load(path)
         else
             local h = {}
-            h.xMin, h.xMax = {}, {}
-            h.yMin, h.yMax = {}, {}
+            for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
+                h[param] = torch.FloatTensor()
+            end
+            h.size = 0
+            h.growthFactor = 1.5
+
             self.h = h
         end
     end
@@ -25,11 +30,21 @@ do
     end
 
     function WindowDebugger:add(intModule)
-	local windowsToDisplay = math.min(intModule.nWindows, 90)
-        self.h.xMin[#self.h.xMin+1] = intModule.xMin:float():clone():view(-1)[{{1,windowsToDisplay}}]
-        self.h.xMax[#self.h.xMax+1] = intModule.xMax:float():clone():view(-1)[{{1,windowsToDisplay}}]
-        self.h.yMin[#self.h.yMin+1] = intModule.yMin:float():clone():view(-1)[{{1,windowsToDisplay}}]
-        self.h.yMax[#self.h.yMax+1] = intModule.yMax:float():clone():view(-1)[{{1,windowsToDisplay}}]
+        local numWindowsToDisplay = math.min(intModule.xMin:nElement(), 90)
+
+        -- do we need to grow Tensors?
+        if self.h.size == 0 or self.h.size == self.h.xMin:size(1) then
+            local newCapacity = self.h.size == 0 and 10 or (self.h.size * 1.5)
+            for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
+                self.h[param]:resize(newCapacity, numWindowsToDisplay)
+            end
+        end
+        self.h.size = self.h.size + 1
+
+        for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
+            self.h[param][self.h.size]:copy(intModule[param]:view(-1)[{{1,numWindowsToDisplay}}])
+        end
+
         self.h.h = intModule.h
         self.h.w = intModule.w
     end
@@ -56,9 +71,9 @@ do
         
         local imH, imW = 100, 100
         local frame = torch.ByteTensor(imH*2, imW*2, 3)
-        local nRects = self.h.xMin[1]:nElement()
+        local nRects = self.h.xMin:size(2)
         
-        for i = 1,#self.h.xMin do
+        for i = 1,self.h.size do
             frame:zero()
             frame[frame:size(1) / 2]:fill(80)
             frame[{{}, frame:size(2) / 2}]:fill(80)
@@ -67,15 +82,15 @@ do
                 local thickness = 1
                 
                 if 
-                    self.h.xMin[i][rect] > self.h.xMax[i][rect] or
-                    self.h.yMin[i][rect] > self.h.yMax[i][rect]
+                    self.h.xMin[{i,rect}] > self.h.xMax[{i,rect}] or
+                    self.h.yMin[{i,rect}] > self.h.yMax[{i,rect}]
                 then
                     thickness = -1
                 end
                     
                 cv.rectangle{frame, 
-                    {self.h.xMin[i][rect]/self.h.h*imH + imH, self.h.yMin[i][rect]/self.h.w*imW + imW},
-                    {self.h.xMax[i][rect]/self.h.h*imH + imH, self.h.yMax[i][rect]/self.h.w*imW + imW},
+                    {self.h.xMin[{i,rect}]/self.h.h*imH + imH, self.h.yMin[{i,rect}]/self.h.w*imW + imW},
+                    {self.h.xMax[{i,rect}]/self.h.h*imH + imH, self.h.yMax[{i,rect}]/self.h.w*imW + imW},
                     colors[(rect-1) % #colors + 1],
                     thickness
                 }
