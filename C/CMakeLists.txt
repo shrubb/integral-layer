@@ -14,6 +14,7 @@ if (CMAKE_VERSION VERSION_LESS 3.1)
 endif()
 
 add_library(integral-c SHARED "integral-c.cpp")
+add_library(cityscapes-c SHARED "cityscapes-c.cpp")
 
 #### CUDA implementation ###
 

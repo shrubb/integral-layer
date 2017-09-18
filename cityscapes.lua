@@ -213,4 +213,75 @@ function cityscapes.labelsToEval(labels)
     return retval
 end
 
+ffi = require 'ffi'
+
+local C_lib = ffi.load('C/lib/libcityscapes-c.so')
+
+ffi.cdef [[
+void updateConfusionMatrix(
+    long *confMatrix, long *predictedLabels,
+    unsigned char *labels, int numPixels);
+]]
+
+function cityscapes.updateConfusionMatrix(confMatrix, predictedLabels, labels)
+    -- confMatrix:      long, 19x19
+    -- predictedLabels: long, 128x256
+    -- labels:          byte, 128x256
+    C_lib.updateConfusionMatrix(
+        torch.data(confMatrix), torch.data(predictedLabels),
+        torch.data(labels), predictedLabels:nElement())
+end
+
+local classCategories = {
+    {1, 2},                   -- flat
+    {3, 4, 5},                -- construction
+    {6, 7, 8},                -- object
+    {9, 10},                  -- nature
+    {11},                     -- sky
+    {12, 13},                 -- human
+    {14, 15, 16, 17, 18, 19}, -- vehicle
+}
+
+local function validAverage(t)
+    local sum, count = 0, 0
+    t:apply(
+        function(x)
+            if x == x then -- if x is not nan
+                sum = sum + x
+                count = count + 1
+            end
+        end
+    )
+
+    return count > 0 and (sum / count) or 0
+end
+
+function cityscapes.calcIoU(confMatrix)
+    local IoUclass = torch.FloatTensor(19)
+    for classIdx = 1,IoUclass:nElement() do
+        local TP = confMatrix[{classIdx, classIdx}]
+        local FN = confMatrix[{classIdx, {}}]:sum() - TP
+        local FP = confMatrix[{{}, classIdx}]:sum() - TP
+        IoUclass[classIdx] = TP / (TP + FP + FN)
+    end
+
+    local IoUcategory = torch.FloatTensor(#classCategories)
+    for categoryIdx, category in ipairs(classCategories) do
+        local TP = 0
+        for _,classIdx in ipairs(category) do
+            TP = TP + confMatrix[{classIdx, classIdx}]
+        end
+
+        local FN, FP = -TP, -TP
+        for _,classIdx in ipairs(category) do
+            FN = FN + confMatrix[{classIdx, {}}]:sum()
+            FP = FP + confMatrix[{{}, classIdx}]:sum()
+        end
+
+        IoUcategory[categoryIdx] = TP / (TP + FP + FN)
+    end
+
+    return validAverage(IoUclass), validAverage(IoUcategory), IoUclass, IoUcategory
+end
+
 return cityscapes
