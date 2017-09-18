@@ -172,11 +172,10 @@ function cityscapes.renderLabels(labels, img, blendCoeff)
         local labelsBlendCoeff = blendCoeff or 0.62
         retval:mul(labelsBlendCoeff)
         
-        img = img:clone()
-        img:add(-img:min())
-        img:div(img:max())
-        img:mul(1 - labelsBlendCoeff)
-        retval:add(img)
+        local MIN = img:min()
+        local MAX = img:max() - MIN
+        retval:add((1 - labelsBlendCoeff) / MAX, img)
+        retval:add(- MIN * (1 - labelsBlendCoeff) / MAX)
     end
     
     return retval
