@@ -221,7 +221,8 @@ local C_lib = ffi.load('C/lib/libcityscapes-c.so')
 ffi.cdef [[
 void updateConfusionMatrix(
     long *confMatrix, long *predictedLabels,
-    unsigned char *labels, int numPixels);
+    unsigned char *labels, int numPixels,
+    int nClasses);
 ]]
 
 function cityscapes.updateConfusionMatrix(confMatrix, predictedLabels, labels)
@@ -230,7 +231,8 @@ function cityscapes.updateConfusionMatrix(confMatrix, predictedLabels, labels)
     -- labels:          byte, 128x256
     C_lib.updateConfusionMatrix(
         torch.data(confMatrix), torch.data(predictedLabels),
-        torch.data(labels), predictedLabels:nElement())
+        torch.data(labels), predictedLabels:nElement(),
+        cityscapes.nClasses)
 end
 
 local classCategories = {
