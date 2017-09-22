@@ -33,7 +33,8 @@ cityscapes.classProbs = torch.FloatTensor {
     0.00098657899070531,
     0.0041390685364604,
 }
-cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
+-- cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
+cityscapes.classWeights = cityscapes.classProbs:clone():add(1.10):log():pow(-1)
 
 function cityscapes.loadNames(kind) -- `kind` is 'train' or 'val'
     --[[ returns:
