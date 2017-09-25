@@ -103,7 +103,10 @@ function cityscapes.loadSample(files)
     -- load image
     local img = cv.imread{imagePath, cv.IMREAD_COLOR}
     cv.cvtColor{img, img, cv.COLOR_BGR2RGB}
-    img = cv.resize{img, cityscapes.dsize, interpolation=cv.INTER_CUBIC}
+    if img:size(1) ~= cityscapes.dsize[2] or 
+       img:size(2) ~= cityscapes.dsize[1] then
+        img = cv.resize{img, cityscapes.dsize, interpolation=cv.INTER_CUBIC}
+    end
     img = img:float():div(255):permute(3,1,2):clone()
 
     -- normalize image globally
@@ -113,19 +116,25 @@ function cityscapes.loadSample(files)
     end
 
     -- load labels
-    local labelsOriginal = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
-    labelsOriginal = cv.resize{labelsOriginal, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
-    local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
-    -- shift labels according to
-    -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
-    local classMap = {
-        7, 8, 11, 12, 13, 17, 19, 20, 21, 
-        22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
-    for torchClass, originalClass in ipairs(classMap) do
-        labelsTorch[labelsOriginal:eq(originalClass)] = torchClass
+    local labels = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
+    if labels:size(1) ~= cityscapes.dsize[2] or
+       labels:size(2) ~= cityscapes.dsize[1] then
+        labelsOriginal = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+    
+        local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
+        -- shift labels according to
+        -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
+        local classMap = {
+            7, 8, 11, 12, 13, 17, 19, 20, 21, 
+            22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
+        for torchClass, originalClass in ipairs(classMap) do
+            labelsTorch[labelsOriginal:eq(originalClass)] = torchClass
+        end
+
+        labels = labelsTorch
     end
 
-    return img, labelsTorch
+    return img, labels
 end
 
 local labelToColor = {
