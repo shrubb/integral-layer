@@ -258,24 +258,54 @@ do
     end
 
     function IntegralSmartNorm:reset()
-        -- the only parameters of the module. Randomly initialize them
-        self.xMin:rand(self.nInputPlane, self.nWindows):add(-0.64):mul(2 * self.h * 0.14)
-        self.yMin:rand(self.nInputPlane, self.nWindows):add(-0.64):mul(2 * self.w * 0.14)
-        
-        do
-            local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
-            local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
+        -- The only parameters of the module. Randomly initialize them
+            
+        -- put boxes in an overlapping uniform grid 
+        -- of size ~ (ceil k/2) x (k) with the (largest possible k)-1;
+        -- then place the remaining ones uniformly
+        local k = 0
+        while (k+1) * math.ceil((k+1)/2) <= self.nWindows do
+            k = k + 1
+        end
 
-            for i = 1,xMax:nElement() do
-                xMax[i] = torch.uniform(
-                    xMin[i] + self.h * 0.05,
-                    xMin[i] + self.h * 0.25)
-                yMax[i] = torch.uniform(
-                    yMin[i] + self.w * 0.05,
-                    yMin[i] + self.w * 0.25)
+        -- add rows then cols as possible
+        local gridSizeW, gridSizeH = k, math.ceil(k/2)
+        -- while gridSizeW * (gridSizeH+1) <= self.nWindows do gridSizeH = gridSizeH + 1 end
+        -- while (gridSizeW+1) * gridSizeH <= self.nWindows do gridSizeW = gridSizeW + 1 end
+
+        local windowCounter = 1
+        local winH, winW = (2*self.h-2) / gridSizeH, (2*self.w-2) / gridSizeW
+        -- loop the overlapping window grid
+        for x = 1,gridSizeH do
+            local xCenter = -self.h+1 - winH*0.5 + winH*x
+            for y = 1,gridSizeW do
+                local yCenter = -self.w+1 - winW*0.5 + winW*y
+
+                self.xMin[{{}, windowCounter}] = xCenter - winH*0.585
+                self.xMax[{{}, windowCounter}] = xCenter + winH*0.585
+                self.yMin[{{}, windowCounter}] = yCenter - winW*0.585
+                self.yMax[{{}, windowCounter}] = yCenter + winW*0.585
+
+                windowCounter = windowCounter + 1
             end
-        end -- do
-        
+        end
+
+        -- uniform init
+        local minHeight, minWidth = winH, winW
+        for inPlaneIdx = 1,self.nInputPlane do
+            for windowIdx = windowCounter,self.nWindows do
+                local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
+                local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
+                local height = torch.uniform(minHeight, 2*self.h-2)
+                local width  = torch.uniform(minWidth , 2*self.w-2)
+
+                self.xMin[{inPlaneIdx, windowIdx}] = torch.uniform(centerX - height/2)
+                self.xMax[{inPlaneIdx, windowIdx}] = torch.uniform(centerX + height/2)
+                self.yMin[{inPlaneIdx, windowIdx}] = torch.uniform(centerY - width /2)
+                self.yMax[{inPlaneIdx, windowIdx}] = torch.uniform(centerY + width /2)
+            end
+        end
+
         -- loss gradients wrt module's parameters
         self.gradXMin:zero()
         self.gradYMin:zero()

@@ -121,17 +121,21 @@ function cityscapes.loadSample(files)
        labels:size(2) ~= cityscapes.dsize[1] then
         labelsOriginal = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
     
-        local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
-        -- shift labels according to
-        -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
-        local classMap = {
-            7, 8, 11, 12, 13, 17, 19, 20, 21, 
-            22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
-        for torchClass, originalClass in ipairs(classMap) do
-            labelsTorch[labelsOriginal:eq(originalClass)] = torchClass
-        end
+        if labels:size(1) == 512 and labels:size(2) == 1024 then
+            labels = labelsOriginal
+        else
+            local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
+            -- shift labels according to
+            -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
+            local classMap = {
+                7, 8, 11, 12, 13, 17, 19, 20, 21, 
+                22, 23, 24, 25, 26, 27, 28, 31, 32, 33}
+            for torchClass, originalClass in ipairs(classMap) do
+                labelsTorch[labelsOriginal:eq(originalClass)] = torchClass
+            end
 
-        labels = labelsTorch
+            labels = labelsTorch
+        end
     end
 
     return img, labels
