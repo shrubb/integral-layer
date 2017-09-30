@@ -30,9 +30,9 @@ do
     end
 
     function WindowDebugger:add(intModule)
-        local numWindowsToDisplay = math.min(intModule.xMin:nElement(), 90)
+        local numWindowsToDisplay = math.min(intModule.xMin:nElement(), 150)
 
-        -- do we need to grow Tensors?
+        -- check if we need to grow Tensors
         if self.h.size == 0 or self.h.size == self.h.xMin:size(1) then
             local newCapacity = self.h.size == 0 and 10 or (self.h.size * 1.5)
             for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
@@ -43,6 +43,7 @@ do
 
         for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
             self.h[param][self.h.size]:copy(intModule[param]:view(-1)[{{1,numWindowsToDisplay}}])
+            self.h[param][self.h.size]:mul(intModule.reparametrization or 1)
         end
 
         self.h.h = intModule.h

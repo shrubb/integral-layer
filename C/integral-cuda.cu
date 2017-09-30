@@ -7,8 +7,6 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
-#include "inplace/transpose.h"
-
 #define BLOCK_SIZE 32
 #define BLOCK_CHANNELS (1024 / (BLOCK_SIZE * BLOCK_SIZE))
 
@@ -118,6 +116,7 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
         output, w+1);
 }
 
+/*
 extern "C"
 void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w) {
     int blockSize1D, gridSize1D;
@@ -136,6 +135,7 @@ void integralImageInplaceCuda(float *input, float *output, int channels, int h, 
 
     inplace::transpose(true, output, w+1, channels * (h+1));
 }
+*/
 
 __global__ void accumulateRowsKernel(
     float *input, float *output, int channels, int h, int w) {

@@ -117,6 +117,7 @@ do
         -- nWindows is the number of box filters per channel
         parent.__init(self)
         self.nInputPlane, self.nWindows, self.h, self.w = nInputPlane, nWindows, h, w
+        self.reparametrization = 583
         
         self.outputNonNorm = torch.FloatTensor()
         
@@ -257,6 +258,13 @@ do
         self:type(self.xMin:type())
     end
 
+    -- reparametrization
+    function IntegralSmartNorm:_reparametrize(mul)
+        for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
+            self[param]:mul(mul and self.reparametrization or (1 / self.reparametrization))
+        end
+    end
+
     function IntegralSmartNorm:reset()
         -- The only parameters of the module. Randomly initialize them
             
@@ -305,6 +313,8 @@ do
                 self.yMax[{inPlaneIdx, windowIdx}] = torch.uniform(centerY + width /2)
             end
         end
+
+        self:_reparametrize(false)
 
         -- loss gradients wrt module's parameters
         self.gradXMin:zero()
@@ -378,6 +388,8 @@ do
     end
 
     function updateOutputCPU(self, input)
+        self:_reparametrize(true)
+
         dirtyFixWindows(self)
 
         local hasChannelDim, hasBatchDim = true, true
@@ -551,10 +563,14 @@ do
         if not hasBatchDim   then self.output = self.output[1] end
         if not hasChannelDim then self.output = self.output[1] end
 
+        self:_reparametrize(false)
+
         return self.output
     end
 
     function updateOutputGPU(self, input)
+        self:_reparametrize(true)
+
         CUDA_lib.dirtyFixWindows(
             torch.data(self.xMin), torch.data(self.xMax),
             torch.data(self.yMin), torch.data(self.yMax),
@@ -692,11 +708,15 @@ do
         if not hasBatchDim   then self.output = self.output[1] end
         if not hasChannelDim then self.output = self.output[1] end
 
+        self:_reparametrize(false)
+
         return self.output
     end
 
     function IntegralSmartNorm:updateGradInput(input, gradOutput)
         if self.gradInput then
+
+            self:_reparametrize(true)
 
             if self.normalize then
                 if not self._backwardDone then
@@ -857,12 +877,16 @@ do
             if not hasBatchDim   then self.gradInput = self.gradInput[1] end
             if not hasChannelDim then self.gradInput = self.gradInput[1] end
 
+            self:_reparametrize(false)
+
             return self.gradInput
         end
     end
 
     function accGradParametersCPU(self, input, gradOutput, scale)
         scale = scale or 1
+
+        self:_reparametrize(true)
 
         if self.normalize then
             if not self._backwardDone then
@@ -937,7 +961,7 @@ do
                         end
 
                         C_lib.backwardNoNormFrac(
-                            intData, gradOutData, scale,
+                            intData, gradOutData, scale * self.reparametrization,
                             self.nWindows, self.h, self.w,
                             torch.data(gradXMin), torch.data(gradXMax),
                             torch.data(gradYMin), torch.data(gradYMax),
@@ -948,7 +972,7 @@ do
                             inData, inStrideRow)
                     else
                         C_lib.backwardNoNorm(
-                            intData, gradOutData, scale,
+                            intData, gradOutData, scale * self.reparametrization,
                             self.nWindows, self.h, self.w,
                             torch.data(gradXMin), torch.data(gradXMax),
                             torch.data(gradYMin), torch.data(gradYMax),
@@ -958,10 +982,14 @@ do
                 end
             end
         end
+
+        self:_reparametrize(false)
     end
 
     function accGradParametersGPU(self, input, gradOutput, scale)
         scale = scale or 1
+
+        self:_reparametrize(true)
         
         if self.normalize then
             if not self._backwardDone then
@@ -1042,10 +1070,10 @@ do
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
-                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
-                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
-                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
-                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
+                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
+                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
+                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
+                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
                     end
                 else
                     if self.replicate then
@@ -1071,14 +1099,16 @@ do
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
-                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale, self.tmpArraySumGPU[1])
-                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale, self.tmpArraySumGPU[2])
-                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale, self.tmpArraySumGPU[3])
-                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale, self.tmpArraySumGPU[4])
+                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
+                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
+                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
+                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
                     end
                 end
             end
         end
+
+        self:_reparametrize(false)
     end
 
     function IntegralSmartNorm:zeroGradParameters()
