@@ -267,7 +267,7 @@ do
 
     function IntegralSmartNorm:reset()
         -- The only parameters of the module. Randomly initialize them
-            
+        
         -- put boxes in an overlapping uniform grid 
         -- of size ~ (ceil k/2) x (k) with the (largest possible k)-1;
         -- then place the remaining ones uniformly
@@ -321,6 +321,23 @@ do
         self.gradYMin:zero()
         self.gradXMax:zero()
         self.gradYMax:zero()
+    end
+
+    function IntegralSmartNorm:resetSingleWindow(idx)
+        local minHeight, minWidth = self.h / 8, self.w / 8
+        local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
+        local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
+        local height = torch.uniform(minHeight, 2*self.h-2)
+        local width  = torch.uniform(minWidth , 2*self.w-2)
+
+        self.xMin:view(-1)[idx] = 
+            torch.uniform(centerX - height/2) / self.reparametrization
+        self.xMax:view(-1)[idx] = 
+            torch.uniform(centerX + height/2) / self.reparametrization
+        self.yMin:view(-1)[idx] = 
+            torch.uniform(centerY - width /2) / self.reparametrization
+        self.yMax:view(-1)[idx] = 
+            torch.uniform(centerY + width /2) / self.reparametrization
     end
 
     function IntegralSmartNorm:parameters()

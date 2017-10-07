@@ -1,0 +1,72 @@
+local w, h, nClasses = ...
+assert(w)
+assert(h)
+assert(nClasses)
+
+require 'nn'
+require 'cudnn'
+require 'IntegralSmartNorm'
+
+function nn.Module.setGroupSparsityMark(self, l, r)
+    self.intPlanesStartIdx = l
+    self.intPlanesEndIdx   = r
+    return self
+end
+
+local SpatialConvolution = cudnn.SpatialConvolution
+local SpatialDilatedConvolution = nn.SpatialDilatedConvolution
+local SpatialFullConvolution = cudnn.SpatialFullConvolution
+local ReLU = cudnn.ReLU
+local SpatialBatchNormalization = cudnn.SpatialBatchNormalization
+local SpatialMaxPooling = cudnn.SpatialMaxPooling
+
+collectgarbage()
+
+local model = nn.Sequential()
+
+model
+    :add(nn.Concat(2)
+        :add(IntegralSmartNorm(3, 140, h, w))
+        :add(SpatialConvolution(3, 32, 3,3, 1,1, 1,1)))
+    :add(SpatialBatchNormalization(3*140+32))
+    :add(ReLU(true))
+    :add(SpatialConvolution(3*140+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 3*140))
+    :add(SpatialBatchNormalization(20))
+    :add(ReLU(true))
+    
+    :add(nn.ConcatTable()
+        :add(nn.Sequential()
+            :add(nn.Concat(2)
+                :add(IntegralSmartNorm(20, 28, h, w))
+                :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
+            :add(SpatialBatchNormalization(20*28+32))
+            :add(ReLU(true))
+            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 20*28)))
+        :add(nn.Identity()))
+    :add(nn.CAddTable())
+    :add(SpatialBatchNormalization(20))
+    :add(ReLU(true))
+
+    :add(nn.ConcatTable()
+        :add(nn.Sequential()
+            :add(nn.Concat(2)
+                :add(IntegralSmartNorm(20, 28, h, w))
+                :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
+            :add(SpatialBatchNormalization(20*28+32))
+            :add(ReLU(true))
+            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 20*28)))
+        :add(nn.Identity()))
+    :add(nn.CAddTable())
+    :add(SpatialBatchNormalization(20))
+    :add(ReLU(true))
+
+    :add(SpatialConvolution(20, nClasses, 1,1,1,1))
+
+model               :get(4).bn = model               :get(2)
+model:get( 7):get(1):get(4).bn = model:get( 7):get(1):get(2)
+model:get(11):get(1):get(4).bn = model:get(11):get(1):get(2)
+
+model:add(nn.View(nClasses, w*h):setNumInputDims(3))
+model:add(nn.Transpose({2, 1}):setNumInputDims(2))
+
+return model
