@@ -7,12 +7,6 @@ require 'nn'
 require 'cudnn'
 require 'IntegralSmartNorm'
 
-function nn.Module.setGroupSparsityMark(self, l, r)
-    self.intPlanesStartIdx = l
-    self.intPlanesEndIdx   = r
-    return self
-end
-
 local SpatialConvolution = cudnn.SpatialConvolution
 local SpatialDilatedConvolution = nn.SpatialDilatedConvolution
 local SpatialFullConvolution = cudnn.SpatialFullConvolution
@@ -25,12 +19,13 @@ collectgarbage()
 local model = nn.Sequential()
 
 model
+    :add(nn.Identity())
     :add(nn.Concat(2)
         :add(IntegralSmartNorm(3, 140, h, w))
         :add(SpatialConvolution(3, 32, 3,3, 1,1, 1,1)))
     :add(SpatialBatchNormalization(3*140+32))
     :add(ReLU(true))
-    :add(SpatialConvolution(3*140+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 3*140))
+    :add(SpatialConvolution(3*140+32, 20, 1,1,1,1):noBias())
     :add(SpatialBatchNormalization(20))
     :add(ReLU(true))
     
@@ -41,7 +36,7 @@ model
                 :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
             :add(SpatialBatchNormalization(20*28+32))
             :add(ReLU(true))
-            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 20*28)))
+            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias()))
         :add(nn.Identity()))
     :add(nn.CAddTable())
     :add(SpatialBatchNormalization(20))
@@ -54,7 +49,7 @@ model
                 :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
             :add(SpatialBatchNormalization(20*28+32))
             :add(ReLU(true))
-            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias():setGroupSparsityMark(1, 20*28)))
+            :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias()))
         :add(nn.Identity()))
     :add(nn.CAddTable())
     :add(SpatialBatchNormalization(20))
@@ -62,11 +57,34 @@ model
 
     :add(SpatialConvolution(20, nClasses, 1,1,1,1))
 
-model               :get(4).bn = model               :get(2)
-model:get( 7):get(1):get(4).bn = model:get( 7):get(1):get(2)
-model:get(11):get(1):get(4).bn = model:get(11):get(1):get(2)
-
 model:add(nn.View(nClasses, w*h):setNumInputDims(3))
 model:add(nn.Transpose({2, 1}):setNumInputDims(2))
 
-return model
+local GSconfig = {
+    {
+        l = 1,
+        r = 3*140,
+        haarConv = model:get(5),
+        bn       = model:get(3),
+        int      = model:get(2):get(1),
+        intInput = model:get(1)
+    },
+    {
+        l = 1,
+        r = 20*28,
+        haarConv = model:get(8):get(1):get(4),
+        bn       = model:get(8):get(1):get(2),
+        int      = model:get(8):get(1):get(1):get(1),
+        intInput = model:get(7)
+    },
+    {
+        l = 1,
+        r = 20*28,
+        haarConv = model:get(12):get(1):get(4),
+        bn       = model:get(12):get(1):get(2),
+        int      = model:get(12):get(1):get(1):get(1),
+        intInput = model:get(11)
+    },
+}
+
+return model, GSconfig

@@ -324,7 +324,7 @@ do
     end
 
     function IntegralSmartNorm:resetSingleWindow(idx)
-        local minHeight, minWidth = self.h / 8, self.w / 8
+        local minHeight, minWidth = self.h / 12, self.w / 12
         local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
         local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
         local height = torch.uniform(minHeight, 2*self.h-2)
