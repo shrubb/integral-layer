@@ -22,9 +22,10 @@ model
     :add(nn.Identity())
     :add(nn.Concat(2)
         :add(IntegralSmartNorm(3, 140, h, w))
-        :add(SpatialConvolution(3, 32, 3,3, 1,1, 1,1)))
+        :add(nn.Sequential()
+            :add(SpatialConvolution(3, 32, 3,3, 1,1, 1,1))
+            :add(ReLU(true))))
     :add(SpatialBatchNormalization(3*140+32))
-    :add(ReLU(true))
     :add(SpatialConvolution(3*140+32, 20, 1,1,1,1):noBias())
     :add(SpatialBatchNormalization(20))
     :add(ReLU(true))
@@ -33,9 +34,10 @@ model
         :add(nn.Sequential()
             :add(nn.Concat(2)
                 :add(IntegralSmartNorm(20, 28, h, w))
-                :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
+                :add(nn.Sequential()
+                    :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1))
+                    :add(ReLU(true))))
             :add(SpatialBatchNormalization(20*28+32))
-            :add(ReLU(true))
             :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias()))
         :add(nn.Identity()))
     :add(nn.CAddTable())
@@ -46,9 +48,10 @@ model
         :add(nn.Sequential()
             :add(nn.Concat(2)
                 :add(IntegralSmartNorm(20, 28, h, w))
-                :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1)))
+                :add(nn.Sequential()
+                    :add(SpatialConvolution(20, 32, 3,3, 1,1, 1,1))
+                    :add(ReLU(true))))
             :add(SpatialBatchNormalization(20*28+32))
-            :add(ReLU(true))
             :add(SpatialConvolution(20*28+32, 20, 1,1,1,1):noBias()))
         :add(nn.Identity()))
     :add(nn.CAddTable())
@@ -64,29 +67,29 @@ local GSconfig = {
     {
         l = 1,
         r = 3*140,
-        haarConv = model:get(5),
+        haarConv = model:get(4),
         bn       = model:get(3),
         int      = model:get(2):get(1),
         intInput = model:get(1),
-        getHaarConvGradOutput = function() return model:get(6).gradInput end
+        getHaarConvGradOutput = function() return model:get(5).gradInput end
     },
     {
         l = 1,
         r = 20*28,
-        haarConv = model:get(8):get(1):get(4),
-        bn       = model:get(8):get(1):get(2),
-        int      = model:get(8):get(1):get(1):get(1),
-        intInput = model:get(7),
-        getHaarConvGradOutput = function() return model:get(9).gradInput[1] end
+        haarConv = model:get(7):get(1):get(3),
+        bn       = model:get(7):get(1):get(2),
+        int      = model:get(7):get(1):get(1):get(1),
+        intInput = model:get(6),
+        getHaarConvGradOutput = function() return model:get(8).gradInput[1] end
     },
     {
         l = 1,
         r = 20*28,
-        haarConv = model:get(12):get(1):get(4),
-        bn       = model:get(12):get(1):get(2),
-        int      = model:get(12):get(1):get(1):get(1),
-        intInput = model:get(11),
-        getHaarConvGradOutput = function() return model:get(13).gradInput[1] end
+        haarConv = model:get(11):get(1):get(3),
+        bn       = model:get(11):get(1):get(2),
+        int      = model:get(11):get(1):get(1):get(1),
+        intInput = model:get(10),
+        getHaarConvGradOutput = function() return model:get(12).gradInput[1] end
     },
 }
 

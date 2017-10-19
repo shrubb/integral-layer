@@ -5,6 +5,74 @@ require 'cv.imgproc'
 local WindowDebugger = torch.class('WindowDebugger')
 
 do
+    local colormap = {
+        {0.00000, 0.00000, 0.08333},
+        {0.00000, 0.00000, 0.08333},
+        {0.00000, 0.00000, 0.12500},
+        {0.00000, 0.00000, 0.16667},
+        {0.00000, 0.00000, 0.20833},
+        {0.00000, 0.00000, 0.25000},
+        {0.00000, 0.00000, 0.29167},
+        {0.00000, 0.00000, 0.33333},
+        {0.00000, 0.00000, 0.37500},
+        {0.00000, 0.00000, 0.41667},
+        {0.00000, 0.00000, 0.45833},
+        {0.00000, 0.00000, 0.50000},
+        {0.00000, 0.00000, 0.54167},
+        {0.00000, 0.00000, 0.58333},
+        {0.00000, 0.00000, 0.62500},
+        {0.00000, 0.00000, 0.66667},
+        {0.00000, 0.00000, 0.70833},
+        {0.00000, 0.00000, 0.75000},
+        {0.00000, 0.00000, 0.79167},
+        {0.00000, 0.00000, 0.83333},
+        {0.00000, 0.00000, 0.87500},
+        {0.00000, 0.00000, 0.91667},
+        {0.00000, 0.00000, 0.95833},
+        {0.00000, 0.00000, 1.00000},
+        {0.00000, 0.04167, 1.00000},
+        {0.00000, 0.08333, 1.00000},
+        {0.00000, 0.12500, 1.00000},
+        {0.00000, 0.16667, 1.00000},
+        {0.00000, 0.20833, 1.00000},
+        {0.00000, 0.25000, 1.00000},
+        {0.00000, 0.29167, 1.00000},
+        {0.00000, 0.33333, 1.00000},
+        {0.00000, 0.37500, 1.00000},
+        {0.00000, 0.41667, 1.00000},
+        {0.00000, 0.45833, 1.00000},
+        {0.00000, 0.50000, 1.00000},
+        {0.00000, 0.54167, 1.00000},
+        {0.00000, 0.58333, 1.00000},
+        {0.00000, 0.62500, 1.00000},
+        {0.00000, 0.66667, 1.00000},
+        {0.00000, 0.70833, 1.00000},
+        {0.00000, 0.75000, 1.00000},
+        {0.00000, 0.79167, 1.00000},
+        {0.00000, 0.83333, 1.00000},
+        {0.00000, 0.87500, 1.00000},
+        {0.00000, 0.91667, 1.00000},
+        {0.00000, 0.95833, 1.00000},
+        {0.00000, 1.00000, 1.00000},
+        {0.06250, 1.00000, 1.00000},
+        {0.12500, 1.00000, 1.00000},
+        {0.18750, 1.00000, 1.00000},
+        {0.25000, 1.00000, 1.00000},
+        {0.31250, 1.00000, 1.00000},
+        {0.37500, 1.00000, 1.00000},
+        {0.43750, 1.00000, 1.00000},
+        {0.50000, 1.00000, 1.00000},
+        {0.56250, 1.00000, 1.00000},
+        {0.62500, 1.00000, 1.00000},
+        {0.68750, 1.00000, 1.00000},
+        {0.75000, 1.00000, 1.00000},
+        {0.81250, 1.00000, 1.00000},
+        {0.87500, 1.00000, 1.00000},
+        {0.93750, 1.00000, 1.00000},
+        {1.00000, 1.00000, 1.00000},
+    }
+    for _,c in ipairs(colormap) do for p = 1,3 do c[p] = c[p] * 255 end end
+
     -- `self.h` is just a wrapper over all useful data
     function WindowDebugger:__init(path)
         if path then
@@ -48,6 +116,45 @@ do
 
         self.h.h = intModule.h
         self.h.w = intModule.w
+    end
+
+    function WindowDebugger.drawBoxes(module, scores)
+        scores = scores:view(-1)
+        scores:add(-scores:min())
+        scores:div(scores:max())
+        local scoresAscIdx = select(2, torch.sort(scores))
+
+        local xMin = module.xMin:float():mul(module.reparametrization or 1):view(-1)
+        local xMax = module.xMax:float():mul(module.reparametrization or 1):view(-1)
+        local yMin = module.yMin:float():mul(module.reparametrization or 1):view(-1)
+        local yMax = module.yMax:float():mul(module.reparametrization or 1):view(-1)
+
+        local imH, imW = 500, 500
+        local frame = torch.ByteTensor(imH*2, imW*2, 3):zero()
+        frame[{{imH-1,imH+1}, {}}]:fill(80)
+        frame[{{}, {imW-1,imW+1}}]:fill(80)
+
+        for idx = 1,xMin:nElement() do
+            local rect = scoresAscIdx[idx]
+            
+            if scores[rect] > 2/63 then
+                local thickness = (xMin[rect] > xMax[rect] or yMin[rect] > yMax[rect]) and -1 or 2
+
+                local cmapIdx = math.ceil(scores[rect] * 63 + 0.5)
+                assert(1 <= cmapIdx and cmapIdx <= #colormap)    
+                local color = colormap[cmapIdx]
+
+                cv.rectangle{frame,
+                    {xMin[rect]/module.h*imH + imH, yMin[rect]/module.w*imW + imW},
+                    {xMax[rect]/module.h*imH + imH, yMax[rect]/module.w*imW + imW},
+                    color,
+                    thickness
+                }
+            end
+        end
+
+        cv.cvtColor{frame, frame, cv.COLOR_BGR2RGB}
+        return frame:permute(3,1,2):clone()
     end
     
     -- refRects: {{xMin, yMin, xMax, yMax}, {xMin, yMin, xMax, yMax}, ...}
