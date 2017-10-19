@@ -117,7 +117,7 @@ do
         -- nWindows is the number of box filters per channel
         parent.__init(self)
         self.nInputPlane, self.nWindows, self.h, self.w = nInputPlane, nWindows, h, w
-        self.reparametrization = 583
+        self.reparametrization = 400 --583
         
         self.outputNonNorm = torch.FloatTensor()
         
@@ -304,13 +304,15 @@ do
             for windowIdx = windowCounter,self.nWindows do
                 local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
                 local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
-                local height = torch.uniform(minHeight, 2*self.h-2)
-                local width  = torch.uniform(minWidth , 2*self.w-2)
+                local height = 2 * torch.uniform(minHeight/2, 
+                    math.min((self.h-1)-centerX, centerX-(-self.h+1)))
+                local width  = 2 * torch.uniform(minWidth /2, 
+                    math.min((self.w-1)-centerY, centerY-(-self.w+1)))
 
-                self.xMin[{inPlaneIdx, windowIdx}] = torch.uniform(centerX - height/2)
-                self.xMax[{inPlaneIdx, windowIdx}] = torch.uniform(centerX + height/2)
-                self.yMin[{inPlaneIdx, windowIdx}] = torch.uniform(centerY - width /2)
-                self.yMax[{inPlaneIdx, windowIdx}] = torch.uniform(centerY + width /2)
+                self.xMin[{inPlaneIdx, windowIdx}] = (centerX - height/2)
+                self.xMax[{inPlaneIdx, windowIdx}] = (centerX + height/2)
+                self.yMin[{inPlaneIdx, windowIdx}] = (centerY - width /2)
+                self.yMax[{inPlaneIdx, windowIdx}] = (centerY + width /2)
             end
         end
 
@@ -327,17 +329,15 @@ do
         local minHeight, minWidth = self.h / 12, self.w / 12
         local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
         local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
-        local height = torch.uniform(minHeight, 2*self.h-2)
-        local width  = torch.uniform(minWidth , 2*self.w-2)
+        local height = 2 * torch.uniform(minHeight/2, 
+            math.min((self.h-1)-centerX, centerX-(-self.h+1)))
+        local width  = 2 * torch.uniform(minWidth /2, 
+            math.min((self.w-1)-centerY, centerY-(-self.w+1)))
 
-        self.xMin:view(-1)[idx] = 
-            torch.uniform(centerX - height/2) / self.reparametrization
-        self.xMax:view(-1)[idx] = 
-            torch.uniform(centerX + height/2) / self.reparametrization
-        self.yMin:view(-1)[idx] = 
-            torch.uniform(centerY - width /2) / self.reparametrization
-        self.yMax:view(-1)[idx] = 
-            torch.uniform(centerY + width /2) / self.reparametrization
+        self.xMin:view(-1)[idx] = (centerX - height/2) / self.reparametrization
+        self.xMax:view(-1)[idx] = (centerX + height/2) / self.reparametrization
+        self.yMin:view(-1)[idx] = (centerY - width /2) / self.reparametrization
+        self.yMax:view(-1)[idx] = (centerY + width /2) / self.reparametrization
     end
 
     function IntegralSmartNorm:parameters()
