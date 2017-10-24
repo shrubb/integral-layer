@@ -129,7 +129,7 @@ do
         local yMin = module.yMin:float():mul(module.reparametrization or 1):view(-1)
         local yMax = module.yMax:float():mul(module.reparametrization or 1):view(-1)
 
-        local imH, imW = 500, 500
+        local imH, imW = 400, 400
         local frame = torch.ByteTensor(imH*2, imW*2, 3):zero()
         frame[{{imH-1,imH+1}, {}}]:fill(80)
         frame[{{}, {imW-1,imW+1}}]:fill(80)

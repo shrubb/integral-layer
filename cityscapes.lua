@@ -96,7 +96,7 @@ end
 -- Time for loading 1 picture:
 -- OpenCV: 0.1926669716835 seconds
 -- Torch : 0.15436439037323 seconds
-function cityscapes.loadSample(files)
+function cityscapes.loadSample(files, option)
     local imagePath  = cityscapes.relative .. 'leftImg8bit/' .. files.image
     local labelsPath = cityscapes.relative .. 'gtFine/' .. files.labels
 
@@ -110,9 +110,15 @@ function cityscapes.loadSample(files)
     img = img:float():div(255):permute(3,1,2):clone()
 
     -- normalize image globally
-    for ch = 1,3 do
-        img[ch]:add(-cityscapes.mean[ch])
-        img[ch]:div(cityscapes.std[ch])
+    if not option:find('dontNormalize') then
+        for ch = 1,3 do
+            img[ch]:add(-cityscapes.mean[ch])
+            img[ch]:div(cityscapes.std[ch])
+        end
+    end
+
+    if option:find('yuv') then
+        img = image.rgb2yuv(img)
     end
 
     -- load labels

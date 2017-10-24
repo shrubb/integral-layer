@@ -326,13 +326,13 @@ do
     end
 
     function IntegralSmartNorm:resetSingleWindow(idx)
-        local minHeight, minWidth = self.h / 12, self.w / 12
-        local centerX = torch.uniform(-self.h+1+minHeight/2, self.h-1-minHeight/2)
-        local centerY = torch.uniform(-self.w+1+minWidth /2, self.w-1-minWidth /2)
+        local minHeight, minWidth = 2,2--self.h / 12, self.w / 12
+        local centerX = torch.uniform(-self.h*(2/14)+1+minHeight/2, self.h*(2/14)-1-minHeight/2)
+        local centerY = torch.uniform(-self.w*(2/14)+1+minWidth /2, self.w*(2/14)-1-minWidth /2)
         local height = 2 * torch.uniform(minHeight/2, 
-            math.min((self.h-1)-centerX, centerX-(-self.h+1)))
+            math.min((self.h*(2/14)-1)-centerX, centerX-(-self.h*(2/14)+1)))
         local width  = 2 * torch.uniform(minWidth /2, 
-            math.min((self.w-1)-centerY, centerY-(-self.w+1)))
+            math.min((self.w*(2/14)-1)-centerY, centerY-(-self.w*(2/14)+1)))
 
         self.xMin:view(-1)[idx] = (centerX - height/2) / self.reparametrization
         self.xMax:view(-1)[idx] = (centerX + height/2) / self.reparametrization
