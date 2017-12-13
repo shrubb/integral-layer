@@ -145,8 +145,8 @@ do
                 local color = colormap[cmapIdx]
 
                 cv.rectangle{frame,
-                    {xMin[rect]/module.h*imH + imH, yMin[rect]/module.w*imW + imW},
-                    {xMax[rect]/module.h*imH + imH, yMax[rect]/module.w*imW + imW},
+                    {yMin[rect]/module.w*imW + imW, xMin[rect]/module.h*imH + imH},
+                    {yMax[rect]/module.w*imW + imW, xMax[rect]/module.h*imH + imH},
                     color,
                     thickness
                 }
@@ -197,8 +197,8 @@ do
                 end
                     
                 cv.rectangle{frame, 
-                    {self.h.xMin[{i,rect}]/self.h.h*imH + imH, self.h.yMin[{i,rect}]/self.h.w*imW + imW},
-                    {self.h.xMax[{i,rect}]/self.h.h*imH + imH, self.h.yMax[{i,rect}]/self.h.w*imW + imW},
+                    {self.h.yMin[{i,rect}]/self.h.w*imW + imW, self.h.xMin[{i,rect}]/self.h.h*imH + imH},
+                    {self.h.yMax[{i,rect}]/self.h.w*imW + imW, self.h.xMax[{i,rect}]/self.h.h*imH + imH},
                     colors[(rect-1) % #colors + 1],
                     thickness
                 }
@@ -207,8 +207,8 @@ do
             if refRects then
                 for i,rect in ipairs(refRects) do
                     cv.rectangle{frame, 
-                        {rect[1]/self.h.h*imH + imH, rect[2]/self.h.w*imW + imW},
-                        {rect[3]/self.h.h*imH + imH, rect[4]/self.h.w*imW + imW},
+                        {rect[2]/self.h.w*imW + imW, rect[1]/self.h.h*imH + imH},
+                        {rect[4]/self.h.w*imW + imW, rect[3]/self.h.h*imH + imH},
                         {100, 100, 0},
                         1
                     }

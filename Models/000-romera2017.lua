@@ -1,3 +1,8 @@
+-- Total operations: 30875844608   
+-- Convolutions do 99.51%  
+-- Integral layers do 0.00%    
+-- Total number of parameters: 10102246
+
 local w, h, nClasses = ...
 assert(w)
 assert(h)

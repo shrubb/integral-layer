@@ -109,6 +109,8 @@ function cityscapes.loadSample(files, option)
     end
     img = img:float():div(255):permute(3,1,2):clone()
 
+    option = option or ''
+
     -- normalize image globally
     if not option:find('dontNormalize') then
         for ch = 1,3 do

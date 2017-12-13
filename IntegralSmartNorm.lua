@@ -117,7 +117,7 @@ do
         -- nWindows is the number of box filters per channel
         parent.__init(self)
         self.nInputPlane, self.nWindows, self.h, self.w = nInputPlane, nWindows, h, w
-        self.reparametrization = 400 --583
+        self.reparametrization = self.w / 0.64 --583
         
         self.outputNonNorm = torch.FloatTensor()
         
@@ -327,12 +327,12 @@ do
 
     function IntegralSmartNorm:resetSingleWindow(idx)
         local minHeight, minWidth = 2,2--self.h / 12, self.w / 12
-        local centerX = torch.uniform(-self.h*(2/14)+1+minHeight/2, self.h*(2/14)-1-minHeight/2)
-        local centerY = torch.uniform(-self.w*(2/14)+1+minWidth /2, self.w*(2/14)-1-minWidth /2)
+        local centerX = torch.uniform(-self.h*(2/4.8)+1+minHeight/2, self.h*(2/4.8)-1-minHeight/2)
+        local centerY = torch.uniform(-self.w*(2/4.8)+1+minWidth /2, self.w*(2/4.8)-1-minWidth /2)
         local height = 2 * torch.uniform(minHeight/2, 
-            math.min((self.h*(2/14)-1)-centerX, centerX-(-self.h*(2/14)+1)))
+            math.min((self.h*(2/4.8)-1)-centerX, centerX-(-self.h*(2/4.8)+1)))
         local width  = 2 * torch.uniform(minWidth /2, 
-            math.min((self.w*(2/14)-1)-centerY, centerY-(-self.w*(2/14)+1)))
+            math.min((self.w*(2/4.8)-1)-centerY, centerY-(-self.w*(2/4.8)+1)))
 
         self.xMin:view(-1)[idx] = (centerX - height/2) / self.reparametrization
         self.xMax:view(-1)[idx] = (centerX + height/2) / self.reparametrization
