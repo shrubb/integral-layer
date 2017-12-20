@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
-seed = 1505317045
+seed = 1513711315
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -30,7 +30,7 @@ int = IntegralSmartNorm(2, 2, h, w):type(dtype)
 int.exact = false
 int.smart = true
 int.replicate = true
-int.normalize = true
+int.normalize = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
@@ -60,9 +60,9 @@ for planeIdx = 1,int.nInputPlane do
         print('')
     end
 end
+int:_reparametrize(false)
 
 if true or iter == 7 then
-initialParam = int[targetParam][paramPlane][paramWin]
 
 local paramsBefore = {}
 for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
@@ -72,8 +72,9 @@ end
 int:forward(img)
 
 for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
-    assert(paramsBefore[param] == tonumber(ffi.new('float', int[param][paramPlane][paramWin])),
-        param .. ' was changed')
+    -- assert(paramsBefore[param] == tonumber(ffi.new('float', int[param][paramPlane][paramWin])),
+    assert(math.abs(paramsBefore[param] - int[param][paramPlane][paramWin]) < 1e-6,
+        param .. ' was changed: ' .. paramsBefore[param]*int.reparametrization .. ' became ' .. int[param][paramPlane][paramWin]*int.reparametrization)
 end
 
 target:add(int.output)
@@ -96,6 +97,7 @@ local innerStep = int.exact and 0.015 or 1
 
 local lowerLimit, upperLimit
 
+int:_reparametrize(true)
 if targetParam:find('Max') then
     lowerLimit = int[targetParam:gsub('Max', 'Min')][paramPlane][paramWin]
     upperLimit = targetParam == 'xMax' and h or w
@@ -104,6 +106,7 @@ else
     upperLimit = int[targetParam:gsub('Min', 'Max')][paramPlane][paramWin]
     innerStep = -innerStep
 end
+int:_reparametrize(false)
 
 -- GPU forward:
 -- 1.4277069568634 total
@@ -114,10 +117,19 @@ end
 
 timer = torch.Timer()
 for param = lowerLimit,upperLimit,step do
+
+    int:_reparametrize(true)
     int[targetParam][paramPlane][paramWin] = param
+    int:_reparametrize(false)
+
     pred = int:forward(img)
+
+    int:_reparametrize(true)
+    local dirtyFixWindowsFired = math.abs(int[targetParam][paramPlane][paramWin] - param) > 1e-6
+    int:_reparametrize(false)
+    
 ---[[
-    if int[targetParam][paramPlane][paramWin] == tonumber(ffi.new('float', param)) then
+    if not dirtyFixWindowsFired then
         params[k] = param
         loss[k] = crit:forward(pred, target)
 
@@ -132,9 +144,11 @@ for param = lowerLimit,upperLimit,step do
         
         -- deriv[k] = (valFront - valBack) / (2 * innerStep)
 
+        int:_reparametrize(true)
         int[targetParam][paramPlane][paramWin] = param + innerStep
+        int:_reparametrize(false)
         valFront = crit:forward(int:forward(img), target)
-        deriv[k] = (valFront - loss[k]) / innerStep
+        deriv[k] = (valFront - loss[k]) / innerStep * int.reparametrization
         
         k = k + 1
     end

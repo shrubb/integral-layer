@@ -419,8 +419,8 @@ do
 
         -- force batch
         if input:nDimension() == 3 then
-           input = nn.utils.addSingletonDimension(input)
-           hasBatchDim = false
+            input = nn.utils.addSingletonDimension(input)
+            hasBatchDim = false
         end
 
         local batchSize = input:size(1)
@@ -577,8 +577,8 @@ do
         
         self._backwardDone = false
 
-        if not hasBatchDim   then self.output = self.output[1] end
-        if not hasChannelDim then self.output = self.output[1] end
+        if not hasBatchDim   and self.output:size(1) == 1 then self.output = self.output[1] end
+        if not hasChannelDim and self.output:size(1) == 1 then self.output = self.output[1] end
 
         self:_reparametrize(false)
 
@@ -722,8 +722,8 @@ do
 
         self._backwardDone = false
 
-        if not hasBatchDim   then self.output = self.output[1] end
-        if not hasChannelDim then self.output = self.output[1] end
+        if not hasBatchDim   and self.output:size(1) == 1 then self.output = self.output[1] end
+        if not hasChannelDim and self.output:size(1) == 1 then self.output = self.output[1] end
 
         self:_reparametrize(false)
 

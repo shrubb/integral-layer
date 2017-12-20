@@ -27,7 +27,7 @@ int = IntegralSmartNorm(2, 2, h, w)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = true
+int.normalize = false
 
 if testType == 'inner' then
     targetX = math.random(2, h-1)
@@ -79,11 +79,11 @@ for planeIdx = 1,int.nInputPlane do
         print('')
     end
 end
+int:_reparametrize(false)
 
 int:type(dtype)
 
 int:forward(img)
-print(int.output:size())
 target:add(int.output)
 
 loss = crit:forward(int.output, target)
@@ -91,7 +91,6 @@ gradOutput = crit:updateGradInput(int.output, target)
 
 int:zeroGradParameters()
 int:updateGradInput(img, gradOutput) -- backward
-print(int.gradInput:size())
 
 params = {}
 loss = {}
