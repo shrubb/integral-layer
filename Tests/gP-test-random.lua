@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
-seed = 1513711315
+-- seed = 1513711315
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -22,10 +22,16 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-local h,w = math.random(2, 100), math.random(2, 100)
+h,w = math.random(2, 100), math.random(2, 100)
+strideH, strideW = 2, 2
 print('h, w = ' .. h .. ', ' .. w)
+print('stride = ' .. strideH .. ', ' .. strideW)
 
-int = IntegralSmartNorm(2, 2, h, w):type(dtype)
+local function applyStride(k, stride)
+    return math.ceil(k / stride)
+end
+
+int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
 int.exact = false
 int.smart = true
@@ -34,7 +40,7 @@ int.normalize = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
-target = torch.rand(int.nInputPlane*int.nWindows, h, w):mul(2):add(-1):type(dtype)
+target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
 
 local paramPlane, paramWin = math.random(1,int.nInputPlane), math.random(1,int.nWindows)
 print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)

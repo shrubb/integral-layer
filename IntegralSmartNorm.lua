@@ -113,11 +113,17 @@ do
     local updateOutputCPU, accGradParametersCPU
     local updateOutputGPU, accGradParametersGPU
 
-    function IntegralSmartNorm:__init(nInputPlane, nWindows, h, w)
+    function IntegralSmartNorm:__init(nInputPlane, nWindows, h, w, strideH, strideW)
         -- nWindows is the number of box filters per channel
         parent.__init(self)
-        self.nInputPlane, self.nWindows, self.h, self.w = nInputPlane, nWindows, h, w
+        self.nInputPlane, self.nWindows = nInputPlane, nWindows
+        self.h, self.w, self.strideH, self.strideW = h, w, strideH, strideW
         self.reparametrization = self.w / 0.64 --583
+
+        local function applyStride(k, stride)
+            return 
+        end
+        self.hOut, self.wOut = applyStride(h, strideH), applyStride(w, strideW)
         
         self.outputNonNorm = torch.FloatTensor()
         
@@ -147,7 +153,7 @@ do
         -- for smart normalization
         self.ones = torch.ones(h, w)
         self.onesIntegral = cv.integral{torch.ones(h, w)}:float() --torch.ones(h, w):float()
-        self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, h, w)
+        self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, self.hOut, self.wOut)
         self.cdiv = nn.CDivTable()
         
         self:float() -- set self.updateOutput, self.accGradParameters and self._type
@@ -433,7 +439,8 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s
         if self.normalize then
-            self.outputOnes:resize(batchSize, self.nInputPlane*self.nWindows, self.h, self.w)
+            self.outputOnes:resize(
+                batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
             assert(self.outputOnes:stride(3) == self.w) -- for C function safety
 
             local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
@@ -472,7 +479,8 @@ do
                             intData, self.h, self.w, outData, 
                             xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                             xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
-                            torch.data(self.ones), self.ones:stride(1))
+                            torch.data(self.ones), self.ones:stride(1),
+                            self.strideH, self.strideW)
                     else
                         if self.replicate then
                             forwardCFunction = C_lib.forwardNoNormReplicate 
@@ -482,7 +490,8 @@ do
 
                         forwardCFunction(
                             intData, self.h, self.w, outData, 
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                            self.strideH, self.strideW)
                     end
                 end
             end
@@ -500,7 +509,8 @@ do
 
         -- next, compute non-normalized box filter map of `input` into self.outputNonNorm
         do
-            self.outputNonNorm:resize(batchSize, self.nInputPlane, self.nWindows, self.h, self.w)
+            self.outputNonNorm:resize(
+                batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
             assert(self.outputNonNorm:stride(4) == self.w) -- for C function safety
 
             for batchIdx = 1,batchSize do
@@ -547,7 +557,8 @@ do
                                 intData, self.h, self.w, outData, 
                                 xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
                                 xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac, 
-                                inData, input:stride(3))
+                                inData, input:stride(3),
+                                self.strideH, self.strideW)
                         else
                             if self.replicate then
                                 forwardCFunction = C_lib.forwardNoNormReplicate
@@ -558,7 +569,8 @@ do
 
                             forwardCFunction(
                                 intData, self.h, self.w, outData, 
-                                xMinCurr, xMaxCurr, yMinCurr, yMaxCurr)
+                                xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
+                                self.strideH, self.strideW)
                         end
                     end
                 end

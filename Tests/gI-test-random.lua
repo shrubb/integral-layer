@@ -20,9 +20,15 @@ end
 for iter = 1,(arg[1] or 1) do
 
 h,w = math.random(2, 400), math.random(2, 400)
+strideH, strideW = 2, 2
 print('h, w = ' .. h .. ', ' .. w)
+print('stride = ' .. strideH .. ', ' .. strideW)
 
-int = IntegralSmartNorm(2, 2, h, w)
+local function applyStride(k, stride)
+    return math.ceil(k / stride)
+end
+
+int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 
 int.exact = true
 int.smart = true
@@ -53,7 +59,7 @@ print('targetX, targetY, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(int.nInputPlane, h, w):type(dtype)
-target = torch.rand(int.nInputPlane*int.nWindows, h, w):add(-0.5):mul(0.1):type(dtype)
+target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):add(-0.5):mul(0.1):type(dtype)
 
 -- img = nn.utils.addSingletonDimension(img)
 -- target = nn.utils.addSingletonDimension(target)

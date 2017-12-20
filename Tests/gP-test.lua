@@ -5,8 +5,9 @@ require 'IntegralSmartNorm'
 
 torch.manualSeed(666)
 local h,w = 2,2
+local strideH, strideW = 2, 2
 
-int = IntegralSmartNorm(1, 1, h, w)
+int = IntegralSmartNorm(1, 1, h, w, strideH, strideW)
 pX, pY = 2,1
 
 int.exact = true
@@ -16,7 +17,7 @@ int.normalize = false
 crit = nn.MSECriterion()
 
 img = torch.rand(int.nInputPlane, h, w)
-target = torch.rand(int.nInputPlane*int.nWindows, h, w)
+target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h, strideH), applyStride(w, strideW))
 
 -- img[1][pX][pY] = 
 

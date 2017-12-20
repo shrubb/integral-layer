@@ -5,8 +5,13 @@ require 'IntegralSmartNorm'
 
 torch.manualSeed(666)
 local h,w = 4,4
+local strideH, strideW = 2, 2
 
-int = IntegralSmartNorm(2, 2, h, w)
+local function applyStride(k, stride)
+    return math.ceil(k / stride)
+end
+
+int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 pX, pY = 4,4
 
 int.exact = true
@@ -16,7 +21,7 @@ int.normalize = false
 crit = nn.MSECriterion()
 
 img = torch.ones(int.nInputPlane, h, w)
-target = torch.ones(int.nInputPlane*int.nWindows, h, w)
+target = torch.ones(int.nInputPlane*int.nWindows, applyStride(h, strideH), applyStride(w, strideW))
 
 --     reference.xMin = torch.Tensor{-200, 35.5,  99, 0.0}
 --     reference.xMax = torch.Tensor{-195, 35.5, 100, 1.1}

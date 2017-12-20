@@ -103,20 +103,23 @@ void backward(
 }
 
 void forwardNoNormReplicate(
-    float *intData, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr) {
+    const float *intData, const int h, const int w, const float *outData,
+    const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
+    const int strideH, const int strideW) {
 
     int t, b, l, r;
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     // #pragma omp parallel for private(t,b,l,r)
-    for (int x = 0; x < h; ++x) {
-        for (int y = 0; y < w; ++y) {
+    for (int x = 0; x < hOut; ++x) {
+        for (int y = 0; y < wOut; ++y) {
 
             // note `1` / `h-1` / `w-1` because of "replicate" interpolation
-            t = max(0, min(x+xMinCurr, h-1) );
-            b = max(1, min(x+xMaxCurr, h)   );
-            l = max(0, min(y+yMinCurr, w-1) );
-            r = max(1, min(y+yMaxCurr, w)   );
+            t = max(0, min(x*strideH+xMinCurr, h-1) );
+            b = max(1, min(x*strideH+xMaxCurr, h)   );
+            l = max(0, min(y*strideW+yMinCurr, w-1) );
+            r = max(1, min(y*strideW+yMaxCurr, w)   );
 
             outData[x*w + y] = 
                 ( intData[b*(w+1) + r]
@@ -131,19 +134,21 @@ void forwardNoNormReplicateFrac(
     float *intData, int h, int w, float *outData,
     int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride) {
+    float *inData, int inDataStride, int strideH, int strideW) {
 
     int t, b, l, r;
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     // #pragma omp parallel for private(t,b,l,r)
-    for (int x = 0; x < h; ++x) {
-        for (int y = 0; y < w; ++y) {
+    for (int x = 0; x < hOut; ++x) {
+        for (int y = 0; y < wOut; ++y) {
 
             // note `1` / `h-1` / `w-1` because of "replicate" interpolation
-            t = max(0, min(x+xMinCurr, h-1) );
-            b = max(1, min(x+xMaxCurr, h)   );
-            l = max(0, min(y+yMinCurr, w-1) );
-            r = max(1, min(y+yMaxCurr, w)   );
+            t = max(0, min(x*strideH+xMinCurr, h-1) );
+            b = max(1, min(x*strideH+xMaxCurr, h)   );
+            l = max(0, min(y*strideW+yMinCurr, w-1) );
+            r = max(1, min(y*strideW+yMaxCurr, w)   );
 
             outData[x*w + y] = 
                 ( intData[b*(w+1) + r]
@@ -152,73 +157,73 @@ void forwardNoNormReplicateFrac(
                 + intData[t*(w+1) + l])
 
             // -- xMax border
-            +(intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            +(intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMaxCurrFrac
 
             // -- yMax border
-            +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(1,min(y+yMaxCurr+1,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr+1,w))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
+            +(intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
             ) * yMaxCurrFrac
 
             // -- xMin border
-            +(intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            +(intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMinCurrFrac
 
             // -- yMin border
-            +(intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(0,min(y+yMinCurr,w-1))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
+            +(intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
             ) * yMinCurrFrac
 
             // -- corner pixels
             + xMaxCurrFrac*yMaxCurrFrac * (
-                   (x+xMaxCurr >  h-1 or
-                    y+yMaxCurr >  w-1 or
-                    x+xMaxCurr <= 0   or
-                    y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMaxCurr)])
+                   (x*strideH+xMaxCurr >  h-1 or
+                    y*strideW+yMaxCurr >  w-1 or
+                    x*strideH+xMaxCurr <= 0   or
+                    y*strideW+yMaxCurr <= 0) ? 0 : inData[(x*strideH+xMaxCurr)*inDataStride + (y*strideW+yMaxCurr)])
 
             + xMinCurrFrac*yMaxCurrFrac * (
-                   (x+xMinCurr-1 >= h-1 or
-                    y+yMaxCurr   >  w-1 or
-                    x+xMinCurr-1 <  0   or
-                    y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMaxCurr)])
+                   (x*strideH+xMinCurr-1 >= h-1 or
+                    y*strideW+yMaxCurr   >  w-1 or
+                    x*strideH+xMinCurr-1 <  0   or
+                    y*strideW+yMaxCurr   <= 0) ? 0 : inData[(x*strideH+xMinCurr-1)*inDataStride + (y*strideW+yMaxCurr)])
 
             + xMaxCurrFrac*yMinCurrFrac * (
-                   (x+xMaxCurr   >  h-1 or
-                    y+yMinCurr-1 >= w-1 or
-                    x+xMaxCurr   <= 0   or
-                    y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStride + (y+yMinCurr-1)])
+                   (x*strideH+xMaxCurr   >  h-1 or
+                    y*strideW+yMinCurr-1 >= w-1 or
+                    x*strideH+xMaxCurr   <= 0   or
+                    y*strideW+yMinCurr-1 <  0) ? 0 : inData[(x*strideH+xMaxCurr)*inDataStride + (y*strideW+yMinCurr-1)])
 
             + xMinCurrFrac*yMinCurrFrac * (
-                   (x+xMinCurr-1 >= h-1 or
-                    y+yMinCurr-1 >= w-1 or
-                    x+xMinCurr-1 <  0   or
-                    y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStride + (y+yMinCurr-1)]);
+                   (x*strideH+xMinCurr-1 >= h-1 or
+                    y*strideW+yMinCurr-1 >= w-1 or
+                    x*strideH+xMinCurr-1 <  0   or
+                    y*strideW+yMinCurr-1 <  0) ? 0 : inData[(x*strideH+xMinCurr-1)*inDataStride + (y*strideW+yMinCurr-1)]);
 
             // if (x == 1 and y == 1) {
             //     std::cout << "outData[" << x << "," << y << "] = " << std::endl <<
