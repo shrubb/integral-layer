@@ -4,12 +4,12 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1505229684
+-- seed = 1514520162
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'border' -- 'corner' | 'border' | 'inner'
+local testType = 'inner' -- 'corner' | 'border' | 'inner'
 local CUDA = false
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -19,8 +19,8 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-h,w = math.random(2, 400), math.random(2, 400)
 strideH, strideW = 2, 2
+h,w = math.random(1+strideH, 5), math.random(1+strideW, 5)
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 
@@ -28,9 +28,9 @@ local function applyStride(k, stride)
     return math.ceil(k / stride)
 end
 
-int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
+int = IntegralSmartNorm(1, 1, h, w, strideH, strideW)
 
-int.exact = true
+int.exact = false
 int.smart = true
 int.replicate = true
 int.normalize = false
@@ -88,12 +88,12 @@ end
 int:_reparametrize(false)
 
 int:type(dtype)
-
 int:forward(img)
 target:add(int.output)
 
 loss = crit:forward(int.output, target)
 gradOutput = crit:updateGradInput(int.output, target)
+print(gradOutput:squeeze())
 
 int:zeroGradParameters()
 int:updateGradInput(img, gradOutput) -- backward
@@ -152,5 +152,6 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
-
 end -- for
+
+print('Seed was ' .. seed)

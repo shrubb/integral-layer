@@ -17,25 +17,27 @@ void forwardNoNormFrac(
     float *inData, int inDataStride);
 
 void forwardNoNormReplicate(
-    float *intData, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr);
+    const float *intData, const int h, const int w, float *outData,
+    const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
+    const int strideH, const int strideW);
 
 void forwardNoNormReplicateFrac(
-    float *intData, int h, int w, float *outData,
-    int xMinCurr, int xMaxCurr, int yMinCurr, int yMaxCurr,
-    float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
-    float *inData, int inDataStride);
+    const float *intData, const int h, const int w, float *outData,
+    const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
+    const float xMinCurrFrac, const float xMaxCurrFrac,
+    const float yMinCurrFrac, const float yMaxCurrFrac,
+    const float *inData, const int inDataStride, const int strideH, const int strideW);
 
 void updateGradInput(
-    float *gradOutputInt, int channels, int h, int w,float *gradInput,
+    float *gradOutputInt, int nWindows, int h, int w, float *gradInput,
     int *xMin, int *xMax, int *yMin, int *yMax,
-    float *gradOutput, int gradOutputStride);
+    float *gradOutput, int gradOutputStride, int strideH, int strideW);
 
 void updateGradInputFrac(
     float *gradOutputInt, int channels, int h, int w, float *gradInput,
     int *xMin, int *xMax, int *yMin, int *yMax,
     float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
-    float *gradOutput, int gradOutputStride);
+    float *gradOutput, int gradOutputStride, int strideH, int strideW);
 
 void backwardNoNorm(
     float *intData, float *gradOutData, float scale, int nWindows, int h, int w,
@@ -121,7 +123,7 @@ do
         self.reparametrization = self.w / 0.64 --583
 
         local function applyStride(k, stride)
-            return 
+            return math.ceil(k / stride)
         end
         self.hOut, self.wOut = applyStride(h, strideH), applyStride(w, strideW)
         
@@ -441,7 +443,7 @@ do
         if self.normalize then
             self.outputOnes:resize(
                 batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
-            assert(self.outputOnes:stride(3) == self.w) -- for C function safety
+            assert(self.outputOnes:stride(3) == self.wOut) -- for C function safety
 
             local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
             local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
@@ -511,7 +513,7 @@ do
         do
             self.outputNonNorm:resize(
                 batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
-            assert(self.outputNonNorm:stride(4) == self.w) -- for C function safety
+            assert(self.outputNonNorm:stride(4) == self.wOut) -- for C function safety
 
             for batchIdx = 1,batchSize do
 
@@ -577,7 +579,7 @@ do
             end
 
             self.outputNonNorm = 
-                self.outputNonNorm:view(batchSize, self.nInputPlane*self.nWindows, self.h, self.w)
+                self.outputNonNorm:view(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
         end
 
         if self.normalize then
@@ -773,11 +775,12 @@ do
 
             self.gradInput:resize(input:size())
             gradOutput = 
-                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.h, self.w)
+                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
 
             if self._type == 'torch.CudaTensor' then
+                error('NYI')
                 
-                self.integralGradOutput:resize(self.nWindows, self.h+1, self.w+1)
+                self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
 
                 if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
                     self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
@@ -832,7 +835,8 @@ do
                 end
             else
                 self.gradInput:zero()
-                self.integralGradOutput:resize(self.nWindows, self.h+1, self.w+1)
+                self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
+                self.integralDouble:resize(1, self.hOut+1, self.wOut+1) -- temporary buffer for OpenCV
 
                 for batchIdx = 1,batchSize do
                     for inPlaneIdx = 1,self.nInputPlane do
@@ -882,7 +886,7 @@ do
                                 torch.data(xMinFrac), torch.data(xMaxFrac),
                                 torch.data(yMinFrac), torch.data(yMaxFrac),
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                                gradOutput:stride(4))
+                                gradOutput:stride(4), self.strideH, self.strideW)
                         else
                             if self.replicate then
                                 updateGradInputCFunction = C_lib.updateGradInput
@@ -897,7 +901,7 @@ do
                                 torch.data(xMinInt), torch.data(xMaxInt),
                                 torch.data(yMinInt), torch.data(yMaxInt),
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                                gradOutput:stride(4))
+                                gradOutput:stride(4), self.strideH, self.strideW)
                         end
                     end
                 end
