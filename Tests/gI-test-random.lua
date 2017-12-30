@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1514520162
+-- seed = 1514636929
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
@@ -30,7 +30,7 @@ end
 
 int = IntegralSmartNorm(1, 1, h, w, strideH, strideW)
 
-int.exact = false
+int.exact = true
 int.smart = true
 int.replicate = true
 int.normalize = false
@@ -87,13 +87,13 @@ for planeIdx = 1,int.nInputPlane do
 end
 int:_reparametrize(false)
 
+if true or iter == 5 then
 int:type(dtype)
 int:forward(img)
 target:add(int.output)
 
 loss = crit:forward(int.output, target)
 gradOutput = crit:updateGradInput(int.output, target)
-print(gradOutput:squeeze())
 
 int:zeroGradParameters()
 int:updateGradInput(img, gradOutput) -- backward
@@ -152,6 +152,7 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
+end
 end -- for
 
 print('Seed was ' .. seed)
