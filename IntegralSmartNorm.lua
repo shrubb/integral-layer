@@ -60,24 +60,28 @@ ffi.cdef [[
 void forwardCudaNoNormReplicate(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax);
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    const int strideH, const int strideW);
 
 void forwardCudaNoNormReplicateFrac(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel);
+    float *inData, int inDataStrideRow, int inDataStrideChannel,
+    const int strideH, const int strideW);
 
 void updateGradInputCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax);
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int strideH, int strideW);
 
 void updateGradInputCudaFrac(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel);
+    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
+    int strideH, int strideW);
 
 void backwardCuda(
     float *intData, float *tmpArray,
@@ -630,8 +634,8 @@ do
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
-            self.outputOnes:resize(batchSize, self.nInputPlane*self.nWindows, self.h, self.w)
-            assert(self.outputOnes:stride(3) == self.w) -- for C function safety
+            self.outputOnes:resize(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
+            assert(self.outputOnes:stride(3) == self.wOut) -- for C function safety
 
             local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
             local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
@@ -656,7 +660,8 @@ do
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(self.ones), self.ones:stride(1), 0)
+                        torch.data(self.ones), self.ones:stride(1), 0,
+                        self.strideH, self.strideW)
                 else
                     if self.replicate then
                         forwardCFunction = CUDA_lib.forwardCudaNoNormReplicate
@@ -669,16 +674,17 @@ do
                         intData, 0, outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax))
+                        torch.data(self.yMin), torch.data(self.yMax),
+                        self.strideH, self.strideW)
                 end
             end
         end
 
         -- next, compute non-normalized box filter map (into self.outputNonNorm) from input
         do
-            self.outputNonNorm:resize(batchSize, self.nInputPlane*self.nWindows, self.h, self.w)
-            assert(self.outputNonNorm:stride(3) == self.w) -- for C function safety
-            assert(self.outputNonNorm:stride(2) == self.w*self.h) -- for C function safety
+            self.outputNonNorm:resize(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
+            assert(self.outputNonNorm:stride(3) == self.wOut) -- for C function safety
+            assert(self.outputNonNorm:stride(2) == self.wOut*self.hOut) -- for C function safety
 
             self.integralCuda:resize(self.nInputPlane, self.h+1, self.w+1)
 
@@ -711,7 +717,8 @@ do
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input), input:stride(3), input:stride(2))
+                        torch.data(input), input:stride(3), input:stride(2),
+                        self.strideH, self.strideW)
                 else
                     if self.replicate then
                         forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicate
@@ -724,7 +731,8 @@ do
                         intData, self.integralCuda:stride(1), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax))
+                        torch.data(self.yMin), torch.data(self.yMax),
+                        self.strideH, self.strideW)
                 end
             end -- for batchIdx
         end -- do
@@ -779,9 +787,7 @@ do
             gradOutput = 
                 gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
 
-            if self._type == 'torch.CudaTensor' then
-                error('NYI')
-                
+            if self._type == 'torch.CudaTensor' then -- GPU
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
 
                 if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
@@ -794,7 +800,7 @@ do
                         CUDA_lib.integralImageCuda(
                             torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                             torch.data(self.integralGradOutput),
-                            self.nWindows, self.h, self.w,
+                            self.nWindows, self.hOut, self.wOut,
                             torch.data(self.tmpArrayGPU))
 
                         -- compute the needed integral sums
@@ -816,7 +822,8 @@ do
                                 torch.data(self.yMin[inPlaneIdx]),
                                 torch.data(self.yMax[inPlaneIdx]),
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                                gradOutput:stride(4), gradOutput:stride(3))
+                                gradOutput:stride(4), gradOutput:stride(3),
+                                self.strideH, self.strideW)
                         else
                             if self.replicate then
                                 updateGradInputCFunction = CUDA_lib.updateGradInputCuda
@@ -831,11 +838,12 @@ do
                                 torch.data(self.xMin[inPlaneIdx]),
                                 torch.data(self.xMax[inPlaneIdx]),
                                 torch.data(self.yMin[inPlaneIdx]),
-                                torch.data(self.yMax[inPlaneIdx]))
+                                torch.data(self.yMax[inPlaneIdx]),
+                                self.strideH, self.strideW)
                         end
                     end
                 end
-            else
+            else -- CPU
                 self.gradInput:zero()
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
                 self.integralDouble:resize(1, self.hOut+1, self.wOut+1) -- temporary buffer for OpenCV

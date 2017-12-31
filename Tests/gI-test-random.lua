@@ -4,13 +4,13 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1514636929
+-- seed = 1514636930
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'inner' -- 'corner' | 'border' | 'inner'
-local CUDA = false
+local testType = 'corner' -- 'corner' | 'border' | 'inner'
+local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
 if CUDA then

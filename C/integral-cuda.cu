@@ -228,6 +228,18 @@ __global__ void accumulateColsInplaceKernel(float *input, int channels, int h, i
 
 /************************ updateOutput ************************/
 
+// Divides x by y (y > 0), rounds towards minus infinity 
+__device__ inline
+int divFloor(const int x, const int y) {
+    return x >= 0 ? x / y : (x - y + 1) / y;
+}
+
+// Divides x by y (y > 0), rounds towards minus infinity, returns positive remainder
+__device__ inline
+int modFloor(const int x, const int y) {
+    return x >= 0 ? x % y : (y + x % y);
+}
+
 __global__ void forwardKernel(
     float *intData, float *outData, int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
@@ -259,10 +271,17 @@ __global__ void forwardKernel(
     }
 }
 
+// TODO: specialize
 __global__ void forwardNoNormReplicateKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float * intData, const int intDataStrideChannel, float * const outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const int strideH, const int strideW) {
+
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
@@ -272,7 +291,7 @@ __global__ void forwardNoNormReplicateKernel(
 
     intData += intDataStrideChannel * inPlaneIdx;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    if (x < hOut and y < wOut and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -282,10 +301,10 @@ __global__ void forwardNoNormReplicateKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        const int t = max(0, min(x+(int) ceil(xMin[z])  , h-1) );
-        const int b = max(1, min(x+(int)floor(xMax[z])+1, h  ) );
-        const int l = max(0, min(y+(int) ceil(yMin[z])  , w-1) );
-        const int r = max(1, min(y+(int)floor(yMax[z])+1, w  ) );
+        const int t = max(0, min(x*strideH+(int) ceil(xMin[z])  , h-1) );
+        const int b = max(1, min(x*strideH+(int)floor(xMax[z])+1, h  ) );
+        const int l = max(0, min(y*strideW+(int) ceil(yMin[z])  , w-1) );
+        const int r = max(1, min(y*strideW+(int)floor(yMax[z])+1, w  ) );
 
         double outValue = 0;
 
@@ -294,19 +313,26 @@ __global__ void forwardNoNormReplicateKernel(
         outValue -= intData[b*(w+1) + l];
         outValue += intData[t*(w+1) + l];
 
-        outData[z*w*h + x*w + y] = outValue;
+        outData[z*wOut*hOut + x*wOut + y] = outValue;
     }
 }
 
+// TODO: specialize
 __global__ void forwardNoNormReplicateFracKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel) {
+    const float * intData, const int intDataStrideChannel, float * const outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
+    const int strideH, const int strideW) {
+
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w; id /= w;
-    const int x = id % h; id /= h;
+    const int y = id % wOut; id /= wOut;
+    const int x = id % hOut; id /= hOut;
     const int & z = id;
 
     const int inPlaneIdx = z / nWindows;
@@ -314,7 +340,7 @@ __global__ void forwardNoNormReplicateFracKernel(
     intData += intDataStrideChannel * inPlaneIdx;
     inData  +=  inDataStrideChannel * inPlaneIdx;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    if (x < hOut and y < wOut and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -334,10 +360,10 @@ __global__ void forwardNoNormReplicateFracKernel(
         const float yMaxCurrFrac = yMax[z] - floor(yMax[z]);
         const int   yMaxCurr = (int)floor(yMax[z]) + 1;
 
-        const int t = max(0, min(x+xMinCurr, h-1) );
-        const int b = max(1, min(x+xMaxCurr, h)   );
-        const int l = max(0, min(y+yMinCurr, w-1) );
-        const int r = max(1, min(y+yMaxCurr, w)   );
+        const int t = max(0, min(x*strideH+xMinCurr, h-1) );
+        const int b = max(1, min(x*strideH+xMaxCurr, h)   );
+        const int l = max(0, min(y*strideW+yMinCurr, w-1) );
+        const int r = max(1, min(y*strideW+yMaxCurr, w)   );
 
         double outValue = 0;
 
@@ -346,84 +372,89 @@ __global__ void forwardNoNormReplicateFracKernel(
         outValue -= intData[b*(w+1) + l];
         outValue += intData[t*(w+1) + l];
 
+        // TODO: tAdv, bAdv, lAdv, rAdv
         // -- xMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            ( intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMaxCurrFrac;
 
         // -- yMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(1,min(y+yMaxCurr+1,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr+1,w))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
+            ( intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
             ) * yMaxCurrFrac;
 
         // -- xMin border
         outValue +=
-            ( intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            ( intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMinCurrFrac;
 
         // -- yMin border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(0,min(y+yMinCurr,w-1))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
+            ( intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
             ) * yMinCurrFrac;
 
         // -- corner pixels
         outValue += 
             xMaxCurrFrac*yMaxCurrFrac * (
-               (x+xMaxCurr >  h-1 or
-                y+yMaxCurr >  w-1 or
-                x+xMaxCurr <= 0   or
-                y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMaxCurr)]);
+               (x*strideH+xMaxCurr >  h-1 or
+                y*strideW+yMaxCurr >  w-1 or
+                x*strideH+xMaxCurr <= 0   or
+                y*strideW+yMaxCurr <= 0) ? 0 : 
+                    inData[(x*strideH+xMaxCurr)*inDataStrideRow + (y*strideW+yMaxCurr)]);
 
         outValue +=
             xMinCurrFrac*yMaxCurrFrac * (
-               (x+xMinCurr-1 >= h-1 or
-                y+yMaxCurr   >  w-1 or
-                x+xMinCurr-1 <  0   or
-                y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMaxCurr)]);
+               (x*strideH+xMinCurr-1 >= h-1 or
+                y*strideW+yMaxCurr   >  w-1 or
+                x*strideH+xMinCurr-1 <  0   or
+                y*strideW+yMaxCurr   <= 0) ? 0 : 
+                    inData[(x*strideH+xMinCurr-1)*inDataStrideRow + (y*strideW+yMaxCurr)]);
 
         outValue +=
             xMaxCurrFrac*yMinCurrFrac * (
-               (x+xMaxCurr   >  h-1 or
-                y+yMinCurr-1 >= w-1 or
-                x+xMaxCurr   <= 0   or
-                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMinCurr-1)]);
+               (x*strideH+xMaxCurr   >  h-1 or
+                y*strideW+yMinCurr-1 >= w-1 or
+                x*strideH+xMaxCurr   <= 0   or
+                y*strideW+yMinCurr-1 <  0) ? 0 : 
+                    inData[(x*strideH+xMaxCurr)*inDataStrideRow + (y*strideW+yMinCurr-1)]);
 
         outValue +=
             xMinCurrFrac*yMinCurrFrac * (
-               (x+xMinCurr-1 >= h-1 or
-                y+yMinCurr-1 >= w-1 or
-                x+xMinCurr-1 <  0   or
-                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)]);
-
-        outData[z*w*h + x*w + y] = outValue;
+               (x*strideH+xMinCurr-1 >= h-1 or
+                y*strideW+yMinCurr-1 >= w-1 or
+                x*strideH+xMinCurr-1 <  0   or
+                y*strideW+yMinCurr-1 <  0) ? 0 : 
+                    inData[(x*strideH+xMinCurr-1)*inDataStrideRow + (y*strideW+yMinCurr-1)]);
+        
+        outData[z*wOut*hOut + x*wOut + y] = outValue;
     }
 }
 
@@ -440,48 +471,61 @@ void forwardCuda(
 }
 
 void forwardCudaNoNormReplicate(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const int strideH, const int strideW) {
 
     // TODO: 1D grid
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
-        (h + dimBlock.x - 1) / dimBlock.x, 
-        (w + dimBlock.y - 1) / dimBlock.y, 
+        (hOut + dimBlock.x - 1) / dimBlock.x, 
+        (wOut + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
     forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows,
-        xMin, xMax, yMin, yMax);
+        xMin, xMax, yMin, yMax,
+        strideH, strideW);
 }
 
 void forwardCudaNoNormReplicateFrac(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel) {
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
+    const int strideH, const int strideW) {
 
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
+    dim3 dimGrid((nInputPlane*nWindows*hOut*wOut + dimBlock.x - 1) / dimBlock.x);
 
     forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
-        inData, inDataStrideRow, inDataStrideChannel);
+        inData, inDataStrideRow, inDataStrideChannel,
+        strideH, strideW);
 }
 
 /************************ updateGradInput ************************/
 
 __global__ void updateGradInputKernel(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const int strideH, const int strideW) {
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     if (x < h and y < w) {
 
@@ -515,18 +559,18 @@ __global__ void updateGradInputKernel(
             if (needToChangeMin) yMinCurr = 0;
             if (needToChangeMax) yMaxCurr = w+66;
 
-            const int t = max(0, min(x+xMinCurr, h) );
-            const int b = max(0, min(x+xMaxCurr, h) );
-            const int l = max(0, min(y+yMinCurr, w) );
-            const int r = max(0, min(y+yMaxCurr, w) );
+            const int t = max(0, min(divFloor(x+xMinCurr + strideH - 1, strideH)    , hOut) );
+            const int b = max(0, min(divFloor(x+xMaxCurr - 1          , strideH) + 1, hOut) );
+            const int l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
+            const int r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
 
-            outValue += gradOutputIntData[b*(w+1) + r];
-            outValue -= gradOutputIntData[t*(w+1) + r];
-            outValue -= gradOutputIntData[b*(w+1) + l];
-            outValue += gradOutputIntData[t*(w+1) + l];
+            outValue += gradOutputIntData[b*(wOut+1) + r];
+            outValue -= gradOutputIntData[t*(wOut+1) + r];
+            outValue -= gradOutputIntData[b*(wOut+1) + l];
+            outValue += gradOutputIntData[t*(wOut+1) + l];
 
             // go to the next channel
-            gradOutputIntData += (h+1)*(w+1);
+            gradOutputIntData += (hOut+1)*(wOut+1);
         }
 
         gradInputData[x*w + y] = outValue;
@@ -534,13 +578,19 @@ __global__ void updateGradInputKernel(
 }
 
 __global__ void updateGradInputFracKernel(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const float *gradOutputData, const int gradOutputStrideRow,
+    const int gradOutputStrideChannel,
+    const int strideH, const int strideW) {
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     if (x < h and y < w) {
 
@@ -578,63 +628,68 @@ __global__ void updateGradInputFracKernel(
             if (needToChangeMin) yMinCurr = 0;
             if (needToChangeMax) yMaxCurr = w+66;
 
-            const int t = max(0, min(x+xMinCurr, h) );
-            const int b = max(0, min(x+xMaxCurr, h) );
-            const int l = max(0, min(y+yMinCurr, w) );
-            const int r = max(0, min(y+yMaxCurr, w) );
+            const int t = max(0, min(divFloor(x+xMinCurr + strideH - 1, strideH)    , hOut) );
+            const int b = max(0, min(divFloor(x+xMaxCurr - 1          , strideH) + 1, hOut) );
+            const int l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
+            const int r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
+
+            const int tAdv = modFloor(x+xMinCurr-1, strideH) == 0 ? max(0, min(t-1, hOut)) : t;
+            const int bAdv = modFloor(x+xMaxCurr  , strideH) == 0 ? max(0, min(b+1, hOut)) : b;
+            const int lAdv = modFloor(y+yMinCurr-1, strideW) == 0 ? max(0, min(l-1, wOut)) : l;
+            const int rAdv = modFloor(y+yMaxCurr  , strideW) == 0 ? max(0, min(r+1, wOut)) : r;
 
             // TODO: 1D grid
-            outValue += gradOutputIntData[b*(w+1) + r];
-            outValue -= gradOutputIntData[t*(w+1) + r];
-            outValue -= gradOutputIntData[b*(w+1) + l];
-            outValue += gradOutputIntData[t*(w+1) + l];
+            outValue += gradOutputIntData[b*(wOut+1) + r];
+            outValue -= gradOutputIntData[t*(wOut+1) + r];
+            outValue -= gradOutputIntData[b*(wOut+1) + l];
+            outValue += gradOutputIntData[t*(wOut+1) + l];
 
             // -- xMax border
             outValue +=
-                ( gradOutputIntData[max(0,min(x+xMaxCurr+1,h))*(w+1)
-                    + max(0,min(y+yMaxCurr,w))]
-                - gradOutputIntData[max(0,min(x+xMaxCurr  ,h))*(w+1)
-                    + max(0,min(y+yMaxCurr,w))]
-                - gradOutputIntData[max(0,min(x+xMaxCurr+1,h))*(w+1)
-                    + max(0,min(y+yMinCurr,w))]
-                + gradOutputIntData[max(0,min(x+xMaxCurr  ,h))*(w+1)
-                    + max(0,min(y+yMinCurr,w))]
+                ( gradOutputIntData[bAdv*(wOut+1)
+                    + r]
+                - gradOutputIntData[b*(wOut+1)
+                    + r]
+                - gradOutputIntData[bAdv*(wOut+1)
+                    + l]
+                + gradOutputIntData[b*(wOut+1)
+                    + l]
                 ) * xMaxCurrFrac;
 
             // -- yMax border
             outValue +=
-                ( gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
-                    + max(0,min(y+yMaxCurr+1,w))]
-                - gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
-                    + max(0,min(y+yMaxCurr  ,w))]
-                - gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
-                    + max(0,min(y+yMaxCurr+1,w))]
-                + gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
-                    + max(0,min(y+yMaxCurr  ,w))]
+                ( gradOutputIntData[b*(wOut+1)
+                    + rAdv]
+                - gradOutputIntData[b*(wOut+1)
+                    + r]
+                - gradOutputIntData[t*(wOut+1)
+                    + rAdv]
+                + gradOutputIntData[t*(wOut+1)
+                    + r]
                 ) * yMaxCurrFrac;
 
             // -- xMin border
             outValue +=
-                ( gradOutputIntData[max(0,min(x+xMinCurr  ,h))*(w+1)
-                    + max(0,min(y+yMaxCurr,w))]
-                - gradOutputIntData[max(0,min(x+xMinCurr-1,h))*(w+1)
-                    + max(0,min(y+yMaxCurr,w))]
-                - gradOutputIntData[max(0,min(x+xMinCurr  ,h))*(w+1)
-                    + max(0,min(y+yMinCurr,w))]
-                + gradOutputIntData[max(0,min(x+xMinCurr-1,h))*(w+1)
-                    + max(0,min(y+yMinCurr,w))]
+                ( gradOutputIntData[t*(wOut+1)
+                    + r]
+                - gradOutputIntData[tAdv*(wOut+1)
+                    + r]
+                - gradOutputIntData[t*(wOut+1)
+                    + l]
+                + gradOutputIntData[tAdv*(wOut+1)
+                    + l]
                 ) * xMinCurrFrac;
 
             // -- yMin border
             outValue +=
-                ( gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
-                    + max(0,min(y+yMinCurr  ,w))]
-                - gradOutputIntData[max(0,min(x+xMaxCurr,h))*(w+1)
-                    + max(0,min(y+yMinCurr-1,w))]
-                - gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
-                    + max(0,min(y+yMinCurr  ,w))]
-                + gradOutputIntData[max(0,min(x+xMinCurr,h))*(w+1)
-                    + max(0,min(y+yMinCurr-1,w))]
+                ( gradOutputIntData[b*(wOut+1)
+                    + l]
+                - gradOutputIntData[b*(wOut+1)
+                    + lAdv]
+                - gradOutputIntData[t*(wOut+1)
+                    + l]
+                + gradOutputIntData[t*(wOut+1)
+                    + lAdv]
                 ) * yMinCurrFrac;
 
             // -- corner pixels
@@ -643,35 +698,43 @@ __global__ void updateGradInputFracKernel(
                    (x+xMaxCurr > h-1 or
                     y+yMaxCurr > w-1 or
                     x+xMaxCurr < 0   or
-                    y+yMaxCurr < 0) ? 0 : 
-                    gradOutputData[(x+xMaxCurr)*gradOutputStrideRow + (y+yMaxCurr)]);
+                    y+yMaxCurr < 0   or
+                    b == bAdv or
+                    r == rAdv) ? 0 : 
+                    gradOutputData[b*gradOutputStrideRow + r]);
 
             outValue +=
                 xMinCurrFrac*yMaxCurrFrac * (
                    (x+xMinCurr-1 > h-1 or
                     y+yMaxCurr   > w-1 or
                     x+xMinCurr-1 < 0   or
-                    y+yMaxCurr   < 0) ? 0 : 
-                    gradOutputData[(x+xMinCurr-1)*gradOutputStrideRow + (y+yMaxCurr)]);
+                    y+yMaxCurr   < 0   or
+                    t == tAdv or
+                    r == rAdv) ? 0 : 
+                    gradOutputData[tAdv*gradOutputStrideRow + r]);
 
             outValue +=
                 xMaxCurrFrac*yMinCurrFrac * (
                    (x+xMaxCurr   > h-1 or
                     y+yMinCurr-1 > w-1 or
                     x+xMaxCurr   < 0   or
-                    y+yMinCurr-1 < 0) ? 0 : 
-                    gradOutputData[(x+xMaxCurr)*gradOutputStrideRow + (y+yMinCurr-1)]);
+                    y+yMinCurr-1 < 0   or
+                    b == bAdv or
+                    l == lAdv) ? 0 : 
+                    gradOutputData[b*gradOutputStrideRow + lAdv]);
 
             outValue +=
                 xMinCurrFrac*yMinCurrFrac * (
                    (x+xMinCurr-1 > h-1 or
                     y+yMinCurr-1 > w-1 or
                     x+xMinCurr-1 < 0   or
-                    y+yMinCurr-1 < 0) ? 0 : 
-                    gradOutputData[(x+xMinCurr-1)*gradOutputStrideRow + (y+yMinCurr-1)]);
+                    y+yMinCurr-1 < 0   or
+                    t == tAdv or
+                    l == lAdv) ? 0 : 
+                    gradOutputData[tAdv*gradOutputStrideRow + lAdv]);
 
             // go to the next channel
-            gradOutputIntData += (h+1)*(w+1);
+            gradOutputIntData += (hOut+1)*(wOut+1);
             gradOutputData += gradOutputStrideChannel;
         }
 
@@ -680,9 +743,11 @@ __global__ void updateGradInputFracKernel(
 }
 
 void updateGradInputCuda(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const int strideH, const int strideW) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
@@ -692,14 +757,17 @@ void updateGradInputCuda(
     updateGradInputKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
-        xMin, xMax, yMin, yMax);
+        xMin, xMax, yMin, yMax,
+        strideH, strideW);
 }
 
 void updateGradInputCudaFrac(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, float *yMax,
+    const float *gradOutputData, const int gradOutputStrideRow,
+    const int gradOutputStrideChannel,
+    const int strideH, const int strideW) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
@@ -710,7 +778,8 @@ void updateGradInputCudaFrac(
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
-        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
+        strideH, strideW);
 }
 
 /************************ accGradParameters ************************/

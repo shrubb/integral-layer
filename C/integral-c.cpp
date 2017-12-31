@@ -472,7 +472,6 @@ void updateGradInput(
 
         // go to the next channel
         gradOutputInt += (hOut+1)*(wOut+1);
-        gradOutput += hOut*gradOutputStride;
     }
 }
 
