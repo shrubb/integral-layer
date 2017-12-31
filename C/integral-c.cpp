@@ -612,7 +612,11 @@ void backwardNoNorm(
     float *intData, float *gradOutData, float scale,
     int nWindows, int h, int w,
     float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
-    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt) {
+    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
+    const int strideH, const int strideW) {
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
     
@@ -622,8 +626,11 @@ void backwardNoNorm(
         double yMinDelta = 0;
     
         // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
-        for (int x = 1; x <= h; ++x) {
-            for (int y = 1; y <= w; ++y) {
+        for (int xOut = 0; xOut < hOut; ++xOut) {
+            for (int yOut = 0; yOut < wOut; ++yOut) {
+
+                const int x = xOut*strideH + 1;
+                const int y = yOut*strideW + 1;
 
                 // `x+xMinInt[windowIdx]` = 0-index of the first "full" box cell
                 // `x+xMaxInt[windowIdx]` = 0-index of the last "full" box cell + 1
@@ -634,7 +641,7 @@ void backwardNoNorm(
                 // `x+xMaxInt[windowIdx]` is the 0-index of the second one.
                 
                 if (x+xMaxInt[windowIdx] >= 1 and x+xMaxInt[windowIdx] < h) {
-                    xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
+                    xMaxDelta += gradOutData[xOut*wOut + yOut] *
                         ( intData[max(1,min(x+xMaxInt[windowIdx]+1, h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1)
@@ -646,7 +653,7 @@ void backwardNoNorm(
                 }
 
                 if (x+xMinInt[windowIdx] >= 1 and x+xMinInt[windowIdx] < h) {
-                    xMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                    xMinDelta -= gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMinInt[windowIdx]  , h  ))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(0,min(x+xMinInt[windowIdx]-1, h-1))*(w+1)
@@ -658,7 +665,7 @@ void backwardNoNorm(
                 }
 
                 if (y+yMaxInt[windowIdx] >= 1 and y+yMaxInt[windowIdx] < w) {
-                    yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
+                    yMaxDelta += gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
                             + max(1,min(y+yMaxInt[windowIdx]+1, w))]
                         - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
@@ -670,7 +677,7 @@ void backwardNoNorm(
                 }
                 
                 if (y+yMinInt[windowIdx] >= 1 and y+yMinInt[windowIdx] < w) {
-                    yMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                    yMinDelta -= gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx]  , w  ))]
                         - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
@@ -688,7 +695,7 @@ void backwardNoNorm(
         gradYMin[windowIdx] += scale * yMinDelta;
         gradYMax[windowIdx] += scale * yMaxDelta;
 
-        gradOutData += h*w;
+        gradOutData += hOut*wOut;
     }
 }
 
@@ -699,7 +706,11 @@ void backwardNoNormFrac(
     float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
     int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
     float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
-    float *inData, int inStrideRow) {
+    float *inData, int inStrideRow,
+    const int strideH, const int strideW) {
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     float tlCorner, trCorner, blCorner, brCorner; // values from inData
 
@@ -711,8 +722,11 @@ void backwardNoNormFrac(
         double yMinDelta = 0;
     
         // #pragma omp parallel for reduction(+:xMaxDelta,xMinDelta,yMaxDelta,yMinDelta)
-        for (int x = 1; x <= h; ++x) {
-            for (int y = 1; y <= w; ++y) {
+        for (int xOut = 0; xOut < hOut; ++xOut) {
+            for (int yOut = 0; yOut < wOut; ++yOut) {
+
+                const int x = xOut*strideH + 1;
+                const int y = yOut*strideW + 1;
 
                 // `x+xMinInt[windowIdx]` = 0-index of the first "full" box cell
                 // `x+xMaxInt[windowIdx]` = 0-index of the last "full" box cell + 1
@@ -740,7 +754,7 @@ void backwardNoNormFrac(
                                     max(0,min(w-1,y+yMaxInt[windowIdx]  ))];
 
                 if (x+xMaxInt[windowIdx] >= 1 and x+xMaxInt[windowIdx] < h) {
-                    xMaxDelta += gradOutData[(x-1)*w + (y-1)] *
+                    xMaxDelta += gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx]+1, h))*(w+1) 
                             + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(0,min(x+xMaxInt[windowIdx]  , h))*(w+1) 
@@ -754,7 +768,7 @@ void backwardNoNormFrac(
                 }
 
                 if (x+xMinInt[windowIdx] >= 1 and x+xMinInt[windowIdx] < h) {
-                    xMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                    xMinDelta -= gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMinInt[windowIdx]  , h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx], w))]
                         - intData[max(0,min(x+xMinInt[windowIdx]-1, h))*(w+1)
@@ -768,7 +782,7 @@ void backwardNoNormFrac(
                 }
 
                 if (y+yMaxInt[windowIdx] >= 1 and y+yMaxInt[windowIdx] < w) {
-                    yMaxDelta += gradOutData[(x-1)*w + (y-1)] *
+                    yMaxDelta += gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
                             + max(0,min(y+yMaxInt[windowIdx]+1, w))]
                         - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
@@ -782,7 +796,7 @@ void backwardNoNormFrac(
                 }
                 
                 if (y+yMinInt[windowIdx] >= 1 and y+yMinInt[windowIdx] < w) {
-                    yMinDelta -= gradOutData[(x-1)*w + (y-1)] *
+                    yMinDelta -= gradOutData[xOut*wOut + yOut] *
                         ( intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
                             + max(0,min(y+yMinInt[windowIdx]  , w))]
                         - intData[max(0,min(x+xMaxInt[windowIdx], h))*(w+1)
@@ -802,7 +816,7 @@ void backwardNoNormFrac(
         gradYMin[windowIdx] += scale * yMinDelta;
         gradYMax[windowIdx] += scale * yMaxDelta;
 
-        gradOutData += h*w;
+        gradOutData += hOut*wOut;
     }
 }
 

@@ -42,7 +42,8 @@ void updateGradInputFrac(
 void backwardNoNorm(
     float *intData, float *gradOutData, float scale, int nWindows, int h, int w,
     float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
-    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt);
+    int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
+    const int strideH, const int strideW);
 
 void backwardNoNormFrac(
     float *intData, float *gradOutData, float scale,
@@ -50,7 +51,8 @@ void backwardNoNormFrac(
     float *gradXMin, float *gradXMax, float *gradYMin, float *gradYMax,
     int *xMinInt, int *xMaxInt, int *yMinInt, int *yMaxInt,
     float *xMinFrac, float *xMaxFrac, float *yMinFrac, float *yMaxFrac,
-    float *inData, int inStrideRow); ]]
+    float *inData, int inStrideRow,
+    const int strideH, const int strideW); ]]
 
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
@@ -950,9 +952,9 @@ do
             -- iteration 2: gradient by outputOnes
             local gradOutput = self.normalize and self.cdiv.gradInput[k] or gradOutput
             gradOutput = 
-                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.h, self.w)
+                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
 
-            assert(gradOutput:stride(gradOutput:nDimension()-1) == self.w) -- for C function
+            assert(gradOutput:stride(gradOutput:nDimension()-1) == self.wOut) -- for C function
 
             for batchIdx = 1,batchSize do
                 for inPlaneIdx = 1,self.nInputPlane do
@@ -1002,7 +1004,7 @@ do
                             torch.data(yMinInt), torch.data(yMaxInt),
                             torch.data(xMinFrac), torch.data(xMaxFrac),
                             torch.data(yMinFrac), torch.data(yMaxFrac),
-                            inData, inStrideRow)
+                            inData, inStrideRow, self.strideH, self.strideW)
                     else
                         C_lib.backwardNoNorm(
                             intData, gradOutData, scale * self.reparametrization,
@@ -1010,7 +1012,8 @@ do
                             torch.data(gradXMin), torch.data(gradXMax),
                             torch.data(gradYMin), torch.data(gradYMax),
                             torch.data(xMinInt), torch.data(xMaxInt),
-                            torch.data(yMinInt), torch.data(yMaxInt))
+                            torch.data(yMinInt), torch.data(yMaxInt),
+                            self.strideH, self.strideW)
                     end
                 end
             end

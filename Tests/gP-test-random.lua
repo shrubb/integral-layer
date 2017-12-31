@@ -9,7 +9,7 @@ print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local targetParam = 'xMax'
+local targetParam = 'yMax'
 print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
 
@@ -23,7 +23,7 @@ end
 for iter = 1,(arg[1] or 1) do
 
 h,w = math.random(2, 100), math.random(2, 100)
-strideH, strideW = 2, 2
+strideH, strideW = 2, 3
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 
@@ -33,7 +33,7 @@ end
 
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
-int.exact = false
+int.exact = true
 int.smart = true
 int.replicate = true
 int.normalize = false
