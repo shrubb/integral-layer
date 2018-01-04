@@ -86,13 +86,15 @@ void updateGradInputCudaFrac(
 void backwardCuda(
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
-    float *xMin, float *xMax, float *yMin, float *yMax);
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int strideH, int strideW);
 
 void backwardCudaFrac(
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow);
+    float *inData, int inDataStrideRow,
+    int strideH, int strideW);
 
 void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
 void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
@@ -1059,9 +1061,10 @@ do
 
         local batchSize = input:size(1)
 
+        -- integralCuda must already hold integrated `input`
         assert(self.integralCuda:stride(2) == self.w+1)
 
-        self.tmpArrayGPU   :resize(4, self.nWindows, self.h * self.w)
+        self.tmpArrayGPU   :resize(4, self.nWindows, self.hOut * self.wOut)
         self.tmpArraySumGPU:resize(4, self.nWindows)
 
         for k = 1,(self.normalize and 2 or 1) do
@@ -1069,7 +1072,7 @@ do
             -- iteration 2: gradient by outputOnes
             local gradOutput = self.normalize and self.cdiv.gradInput[k] or gradOutput
             gradOutput = 
-                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.h * self.w)
+                gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut * self.wOut)
 
             local intStrideChannel = k == 1 and self.integralCuda:stride(1) or 0
 
@@ -1102,7 +1105,7 @@ do
 
                         self.tmpArrayGPU:copy(
                             gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
-                                :expand(4, self.nWindows, self.h * self.w))
+                                :expand(4, self.nWindows, self.hOut * self.wOut))
 
                         -- multiplies `self.tmpArrayGPU` by parameter deltas
                         accGradParametersCFunction(
@@ -1110,7 +1113,7 @@ do
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
                             torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
-                            inData, inStrideRow) --, inStrideChannel)
+                            inData, inStrideRow, self.strideH, self.strideW) --, inStrideChannel)
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
@@ -1132,14 +1135,15 @@ do
 
                         self.tmpArrayGPU:copy(
                             gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
-                                :expand(4, self.nWindows, self.h * self.w))
+                                :expand(4, self.nWindows, self.hOut * self.wOut))
 
                         -- multiplies `self.tmpArrayGPU` by parameter deltas
                         accGradParametersCFunction(
                             intData, torch.data(self.tmpArrayGPU),
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
-                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]))
+                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
+                            self.strideH, self.strideW)
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 

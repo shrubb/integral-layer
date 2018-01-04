@@ -13,7 +13,7 @@ local targetParam = 'yMax'
 print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
 
-local CUDA = false
+local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
 if CUDA then
@@ -23,7 +23,7 @@ end
 for iter = 1,(arg[1] or 1) do
 
 h,w = math.random(2, 100), math.random(2, 100)
-strideH, strideW = 2, 2
+strideH, strideW = 2,2
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 

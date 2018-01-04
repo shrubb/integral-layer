@@ -28,7 +28,7 @@ local function applyStride(k, stride)
     return math.ceil(k / stride)
 end
 
-int = IntegralSmartNorm(1, 1, h, w, strideH, strideW)
+int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 
 int.exact = true
 int.smart = true
