@@ -19,8 +19,8 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-strideH, strideW = 2, 2
-h,w = math.random(1+strideH, 5), math.random(1+strideW, 5)
+strideH, strideW = 1, 1
+h,w = math.random(1+strideH, 50), math.random(1+strideW, 50)
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 
@@ -28,7 +28,7 @@ local function applyStride(k, stride)
     return math.ceil(k / stride)
 end
 
-int = IntegralSmartNorm(2, 1, h, w, strideH, strideW)
+int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 
 int.exact = true
 int.smart = true

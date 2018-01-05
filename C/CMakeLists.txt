@@ -13,7 +13,7 @@ if (CMAKE_VERSION VERSION_LESS 3.1)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 endif()
 
-add_library(integral-c SHARED "integral-c.cpp")
+add_library(integral-c SHARED integral-c.cpp integral-strided-c.cpp)
 add_library(cityscapes-c SHARED "cityscapes-c.cpp")
 
 #### CUDA implementation ###
@@ -22,6 +22,6 @@ find_package(CUDA)
 
 if (CUDA_FOUND)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++11")
-    cuda_add_library(integral-cuda SHARED "integral-cuda.cu")
+    cuda_add_library(integral-cuda SHARED integral-cuda.cu integral-strided-cuda.cu) 
     cuda_add_cublas_to_target(integral-cuda)
 endif()

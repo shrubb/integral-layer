@@ -57,13 +57,13 @@ void backwardNoNormFrac(
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
 ffi.cdef [[
-void forwardCudaNoNormReplicate(
+void forwardNoNormReplicateCuda(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW);
 
-void forwardCudaNoNormReplicateFrac(
+void forwardNoNormReplicateFracCuda(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -76,7 +76,7 @@ void updateGradInputCuda(
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void updateGradInputCudaFrac(
+void updateGradInputFracCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -89,7 +89,7 @@ void backwardCuda(
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void backwardCudaFrac(
+void backwardFracCuda(
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -651,7 +651,7 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        forwardCFunction = CUDA_lib.forwardCudaNoNormReplicateFrac
+                        forwardCFunction = CUDA_lib.forwardNoNormReplicateFracCuda
                     else
                         error('NYI')
                         forwardCFunction = C_lib.forwardNoNormFrac
@@ -666,7 +666,7 @@ do
                         self.strideH, self.strideW)
                 else
                     if self.replicate then
-                        forwardCFunction = CUDA_lib.forwardCudaNoNormReplicate
+                        forwardCFunction = CUDA_lib.forwardNoNormReplicateCuda
                     else
                         error('NYI')
                         forwardCFunction = C_lib.forwardNoNorm
@@ -708,10 +708,10 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicateFrac
+                        forwardCudaFunction = CUDA_lib.forwardNoNormReplicateFracCuda
                     else
                         error('NYI')
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormFrac
+                        forwardCudaFunction = CUDA_lib.forwardNoNormFracCuda
                     end
 
                     forwardCudaFunction(
@@ -723,10 +723,10 @@ do
                         self.strideH, self.strideW)
                 else
                     if self.replicate then
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNormReplicate
+                        forwardCudaFunction = CUDA_lib.forwardNoNormReplicateCuda
                     else
                         error('NYI')
-                        forwardCudaFunction = CUDA_lib.forwardCudaNoNorm
+                        forwardCudaFunction = CUDA_lib.forwardNoNormCuda
                     end
 
                     forwardCudaFunction(
@@ -810,7 +810,7 @@ do
 
                         if self.exact then
                             if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputCudaFrac
+                                updateGradInputCFunction = CUDA_lib.updateGradInputFracCuda
                             else
                                 error('NYI')
                             end
@@ -1081,7 +1081,7 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        accGradParametersCFunction = CUDA_lib.backwardCudaFrac
+                        accGradParametersCFunction = CUDA_lib.backwardFracCuda
                     else
                         error('NYI')
                     end

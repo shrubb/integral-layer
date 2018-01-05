@@ -1,13 +1,8 @@
-#include <iostream>
 #include <stdio.h>
-#include <assert.h>
-#include <algorithm>
 #include <cmath>
+#include <algorithm>
 
 #include <cuda_runtime.h>
-#include <cublas_v2.h>
-
-#include "integral-strided-cuda.hpp"
 
 #define BLOCK_SIZE 32
 #define BLOCK_CHANNELS (1024 / (BLOCK_SIZE * BLOCK_SIZE))
@@ -16,24 +11,6 @@ using std::max;
 using std::min;
 using std::floor;
 using std::ceil;
-
-cublasHandle_t cublasHandle;
-float *CUDA_ZERO_FLOAT, *CUDA_ONE_FLOAT; // for cublas in device pointer mode
-
-extern "C"
-void _initCublasHandle() {
-    if (cublasCreate(&cublasHandle) != CUBLAS_STATUS_SUCCESS) {
-        printf ("CUBLAS initialization failed\n");
-    }
-    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
-    // TODO: at shutdown, `cublasDestroy(handle);`
-
-    // TODO: deallocate this!
-    float zeroOne[] = {0, 1};
-    cudaMalloc((void**)&CUDA_ZERO_FLOAT, sizeof(zeroOne));
-    CUDA_ONE_FLOAT = CUDA_ZERO_FLOAT + 1;
-    cudaMemcpy(CUDA_ZERO_FLOAT, zeroOne, sizeof(zeroOne), cudaMemcpyHostToDevice);
-}
 
 // TODO remove this code
 #define CUDA_ERROR_CHECK
@@ -80,155 +57,21 @@ inline void __cudaCheckError( const char *file, const int line )
     return;
 }
 
-/************************ Integral image computation ************************/
-
-__global__ void accumulateRowsKernel(
-    float *input, float *output, int channels, int totalRows, int w);
-__global__ void accumulateColsKernel(
-    float *input, float *output, int channels, int h, int w);
-__global__ void accumulateColsInplaceKernel(
-    float *input, int channels, int h, int w);
-__global__ void accumulateColsInplaceTransposedKernel(
-    float *input, int channels, int h, int w);
-
-extern "C"
-void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp) {
-    int blockSize1D, gridSize1D;
-
-    int totalCols = channels * w;
-    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
-    gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
-    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
-
-    cublasSgeam(
-        cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
-        CUDA_ONE_FLOAT, output, w+1,
-        CUDA_ZERO_FLOAT, tmp, channels * (h+1),
-        tmp, channels * (h+1));
-
-    int totalRows = channels * h;
-    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
-    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
-    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (tmp, channels, h, w);
-
-    cublasSgeam(
-        cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
-        CUDA_ONE_FLOAT, tmp, channels * (h+1),
-        CUDA_ZERO_FLOAT, output, w+1,
-        output, w+1);
-}
-
-/*
-extern "C"
-void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w) {
-    int blockSize1D, gridSize1D;
-
-    int totalCols = channels * w;
-    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
-    gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
-    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
-
-    inplace::transpose(true, output, channels * (h+1), w+1);
-
-    int totalRows = channels * h;
-    blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
-    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
-    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
-
-    inplace::transpose(true, output, w+1, channels * (h+1));
-}
-*/
-
-__global__ void accumulateRowsKernel(
-    float *input, float *output, int channels, int h, int w) {
-    // view multichannel image as a multiline single-channel image
-    int globalRowIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (globalRowIdx < channels * h) {
-        float *outputRow = output + (globalRowIdx + globalRowIdx / h + 1) * (w+1) + 1;
-        outputRow[-1] = 0;
-
-        double sum = 0;
-        for (int i = 0; i < w; ++i) {
-            sum += input[globalRowIdx * w + i];
-            outputRow[i] = static_cast<float>(sum);
-        }
-
-        // need to zero the (0,0) corner of the output separately >:(
-        output[(globalRowIdx / h) * (w+1) * (h+1)] = 0;
-    }
-}
-
-__global__ void accumulateColsKernel(float *input, float *output, int channels, int h, int w) {
-    // global column index (of all `channels * w` columns in this image)
-    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (colIdx < channels * w) {
-        // jump to current channel
-        input  += (colIdx / w) * h * w;
-        output += (colIdx / w) * (h+1) * (w+1);
-        colIdx %= w; // switch to local column index,
-        ++colIdx;    // it's 1-indexed because first output column is always zero
-
-        output[colIdx] = 0; // first element of every column is always zero
-        double sum = 0;
-
-        for (int i = 1; i <= h; ++i) {
-            sum += static_cast<double>(input[(i-1) * w + colIdx - 1]);
-            output[i * (w+1) + colIdx] = static_cast<float>(sum);
-        }
-    }
-}
-
-__global__ void accumulateColsInplaceTransposedKernel(float *input, int channels, int h, int w) {
-    // in-place.
-    // input is a `(w+1) x channels * (h+1)` array
-
-    // global column index (of all `channels * w` columns in this image)
-    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (colIdx < channels * h) {
-        // need to zero the (0,0) corner of the output separately >:(
-        input[(colIdx / h) * (h+1)] = 0;
-
-        colIdx += colIdx / h + 1; // make `colIdx` the (h+1)-array indexer
-
-        input[colIdx] = 0; // first element of every column is always zero
-
-        double sum = 0;
-
-        for (int i = 1; i <= w; ++i) {
-            float *currentElement = &input[i * channels * (h+1) + colIdx];
-            sum += static_cast<double>(*currentElement);
-            *currentElement = static_cast<float>(sum);
-        }
-    }
-}
-
-__global__ void accumulateColsInplaceKernel(float *input, int channels, int h, int w) {
-    // in-place.
-    // input is already a `channels * (h+1) x (w+1)` array
-
-    // global column index (of all `channels * w` columns in this image)
-    int colIdx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (colIdx < channels * w) {
-        input += (colIdx / w) * (h+1) * (w+1); // jump to current channel
-        colIdx %= w; // switch to local column index,
-        ++colIdx;    // it's 1-indexed because first output column is always zero
-
-        input[colIdx] = 0; // first element of every column is always zero
-        double sum = 0;
-
-        for (int i = 1; i <= h; ++i) {
-            float *currentElement = &input[i * (w+1) + colIdx];
-            sum += static_cast<double>(*currentElement);
-            *currentElement = static_cast<float>(sum);
-        }
-    }
-}
+namespace strided {
 
 /************************ updateOutput ************************/
+
+// Divides x by y (y > 0), rounds towards minus infinity 
+__device__ inline
+int divFloor(const int x, const int y) {
+    return x >= 0 ? x / y : (x - y + 1) / y;
+}
+
+// Divides x by y (y > 0), rounds towards minus infinity, returns positive remainder
+__device__ inline
+int modFloor(const int x, const int y) {
+    return x >= 0 ? x % y : (y + x % y);
+}
 
 __global__ void forwardKernel(
     float *intData, float *outData, int h, int w, int nWindows,
@@ -261,10 +104,17 @@ __global__ void forwardKernel(
     }
 }
 
+// TODO: specialize
 __global__ void forwardNoNormReplicateKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float * intData, const int intDataStrideChannel, float * const outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const int strideH, const int strideW) {
+
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
@@ -274,7 +124,7 @@ __global__ void forwardNoNormReplicateKernel(
 
     intData += intDataStrideChannel * inPlaneIdx;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    if (x < hOut and y < wOut and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -284,10 +134,10 @@ __global__ void forwardNoNormReplicateKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        const int t = max(0, min(x+(int) ceil(xMin[z])  , h-1) );
-        const int b = max(1, min(x+(int)floor(xMax[z])+1, h  ) );
-        const int l = max(0, min(y+(int) ceil(yMin[z])  , w-1) );
-        const int r = max(1, min(y+(int)floor(yMax[z])+1, w  ) );
+        const int t = max(0, min(x*strideH+(int) ceil(xMin[z])  , h-1) );
+        const int b = max(1, min(x*strideH+(int)floor(xMax[z])+1, h  ) );
+        const int l = max(0, min(y*strideW+(int) ceil(yMin[z])  , w-1) );
+        const int r = max(1, min(y*strideW+(int)floor(yMax[z])+1, w  ) );
 
         double outValue = 0;
 
@@ -296,19 +146,26 @@ __global__ void forwardNoNormReplicateKernel(
         outValue -= intData[b*(w+1) + l];
         outValue += intData[t*(w+1) + l];
 
-        outData[z*w*h + x*w + y] = outValue;
+        outData[z*wOut*hOut + x*wOut + y] = outValue;
     }
 }
 
+// TODO: specialize
 __global__ void forwardNoNormReplicateFracKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel) {
+    const float * intData, const int intDataStrideChannel, float * const outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
+    const int strideH, const int strideW) {
+
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w; id /= w;
-    const int x = id % h; id /= h;
+    const int y = id % wOut; id /= wOut;
+    const int x = id % hOut; id /= hOut;
     const int & z = id;
 
     const int inPlaneIdx = z / nWindows;
@@ -316,7 +173,7 @@ __global__ void forwardNoNormReplicateFracKernel(
     intData += intDataStrideChannel * inPlaneIdx;
     inData  +=  inDataStrideChannel * inPlaneIdx;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    if (x < hOut and y < wOut and z < nInputPlane*nWindows) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -336,10 +193,10 @@ __global__ void forwardNoNormReplicateFracKernel(
         const float yMaxCurrFrac = yMax[z] - floor(yMax[z]);
         const int   yMaxCurr = (int)floor(yMax[z]) + 1;
 
-        const int t = max(0, min(x+xMinCurr, h-1) );
-        const int b = max(1, min(x+xMaxCurr, h)   );
-        const int l = max(0, min(y+yMinCurr, w-1) );
-        const int r = max(1, min(y+yMaxCurr, w)   );
+        const int t = max(0, min(x*strideH+xMinCurr, h-1) );
+        const int b = max(1, min(x*strideH+xMaxCurr, h)   );
+        const int l = max(0, min(y*strideW+yMinCurr, w-1) );
+        const int r = max(1, min(y*strideW+yMaxCurr, w)   );
 
         double outValue = 0;
 
@@ -348,88 +205,92 @@ __global__ void forwardNoNormReplicateFracKernel(
         outValue -= intData[b*(w+1) + l];
         outValue += intData[t*(w+1) + l];
 
+        // TODO: tAdv, bAdv, lAdv, rAdv
         // -- xMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            ( intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr+1,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMaxCurrFrac;
 
         // -- yMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(1,min(y+yMaxCurr+1,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr+1,w))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
+            ( intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr+1,w))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
             ) * yMaxCurrFrac;
 
         // -- xMin border
         outValue +=
-            ( intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
+            ( intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1) 
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(1,min(y*strideW+yMaxCurr,w))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr-1,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
             ) * xMinCurrFrac;
 
         // -- yMin border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(0,min(y+yMinCurr,w-1))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
+            ( intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1) 
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            - intData[max(1,min(x*strideH+xMaxCurr,h))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
+            - intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr,w-1))]
+            + intData[max(0,min(x*strideH+xMinCurr,h-1))*(w+1)
+                + max(0,min(y*strideW+yMinCurr-1,w-1))]
             ) * yMinCurrFrac;
 
         // -- corner pixels
         outValue += 
             xMaxCurrFrac*yMaxCurrFrac * (
-               (x+xMaxCurr >  h-1 or
-                y+yMaxCurr >  w-1 or
-                x+xMaxCurr <= 0   or
-                y+yMaxCurr <= 0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMaxCurr)]);
+               (x*strideH+xMaxCurr >  h-1 or
+                y*strideW+yMaxCurr >  w-1 or
+                x*strideH+xMaxCurr <= 0   or
+                y*strideW+yMaxCurr <= 0) ? 0 : 
+                    inData[(x*strideH+xMaxCurr)*inDataStrideRow + (y*strideW+yMaxCurr)]);
 
         outValue +=
             xMinCurrFrac*yMaxCurrFrac * (
-               (x+xMinCurr-1 >= h-1 or
-                y+yMaxCurr   >  w-1 or
-                x+xMinCurr-1 <  0   or
-                y+yMaxCurr   <= 0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMaxCurr)]);
+               (x*strideH+xMinCurr-1 >= h-1 or
+                y*strideW+yMaxCurr   >  w-1 or
+                x*strideH+xMinCurr-1 <  0   or
+                y*strideW+yMaxCurr   <= 0) ? 0 : 
+                    inData[(x*strideH+xMinCurr-1)*inDataStrideRow + (y*strideW+yMaxCurr)]);
 
         outValue +=
             xMaxCurrFrac*yMinCurrFrac * (
-               (x+xMaxCurr   >  h-1 or
-                y+yMinCurr-1 >= w-1 or
-                x+xMaxCurr   <= 0   or
-                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMaxCurr)*inDataStrideRow + (y+yMinCurr-1)]);
+               (x*strideH+xMaxCurr   >  h-1 or
+                y*strideW+yMinCurr-1 >= w-1 or
+                x*strideH+xMaxCurr   <= 0   or
+                y*strideW+yMinCurr-1 <  0) ? 0 : 
+                    inData[(x*strideH+xMaxCurr)*inDataStrideRow + (y*strideW+yMinCurr-1)]);
 
         outValue +=
             xMinCurrFrac*yMinCurrFrac * (
-               (x+xMinCurr-1 >= h-1 or
-                y+yMinCurr-1 >= w-1 or
-                x+xMinCurr-1 <  0   or
-                y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)]);
-
-        outData[z*w*h + x*w + y] = outValue;
+               (x*strideH+xMinCurr-1 >= h-1 or
+                y*strideW+yMinCurr-1 >= w-1 or
+                x*strideH+xMinCurr-1 <  0   or
+                y*strideW+yMinCurr-1 <  0) ? 0 : 
+                    inData[(x*strideH+xMinCurr-1)*inDataStrideRow + (y*strideW+yMinCurr-1)]);
+        
+        outData[z*wOut*hOut + x*wOut + y] = outValue;
     }
 }
 
-extern "C" {
 
 void forwardCuda(
     float *intData, int h, int w, int nWindows, float *outData,
@@ -442,69 +303,61 @@ void forwardCuda(
 }
 
 void forwardNoNormReplicateCuda(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
     const int strideH, const int strideW) {
 
-    if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateCuda(
-            intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
-            xMin, xMax, yMin, yMax,
-            strideH, strideW);
-        return;
-    }
-
     // TODO: 1D grid
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
-        (h + dimBlock.x - 1) / dimBlock.x, 
-        (w + dimBlock.y - 1) / dimBlock.y, 
+        (hOut + dimBlock.x - 1) / dimBlock.x, 
+        (wOut + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
     forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows,
-        xMin, xMax, yMin, yMax);
+        xMin, xMax, yMin, yMax,
+        strideH, strideW);
 }
 
 void forwardNoNormReplicateFracCuda(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel,
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int h, const int w, const int nInputPlane, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
     const int strideH, const int strideW) {
 
-    if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateFracCuda(
-            intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
-            xMin, xMax, yMin, yMax,
-            inData, inDataStrideRow, inDataStrideChannel,
-            strideH, strideW);
-        return;
-    }
-
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
+    dim3 dimGrid((nInputPlane*nWindows*hOut*wOut + dimBlock.x - 1) / dimBlock.x);
 
     forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
-        inData, inDataStrideRow, inDataStrideChannel);
+        inData, inDataStrideRow, inDataStrideChannel,
+        strideH, strideW);
 }
 
 /************************ updateGradInput ************************/
 
 __global__ void updateGradInputKernel(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const int strideH, const int strideW) {
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     if (x < h and y < w) {
 
@@ -538,18 +391,18 @@ __global__ void updateGradInputKernel(
             if (needToChangeMin) yMinCurr = 0;
             if (needToChangeMax) yMaxCurr = w+66;
 
-            const int t = max(0, min(x+xMinCurr, h) );
-            const int b = max(0, min(x+xMaxCurr, h) );
-            const int l = max(0, min(y+yMinCurr, w) );
-            const int r = max(0, min(y+yMaxCurr, w) );
+            const int t = max(0, min(divFloor(x+xMinCurr + strideH - 1, strideH)    , hOut) );
+            const int b = max(0, min(divFloor(x+xMaxCurr - 1          , strideH) + 1, hOut) );
+            const int l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
+            const int r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
 
-            outValue += gradOutputIntData[b*(w+1) + r];
-            outValue -= gradOutputIntData[t*(w+1) + r];
-            outValue -= gradOutputIntData[b*(w+1) + l];
-            outValue += gradOutputIntData[t*(w+1) + l];
+            outValue += gradOutputIntData[b*(wOut+1) + r];
+            outValue -= gradOutputIntData[t*(wOut+1) + r];
+            outValue -= gradOutputIntData[b*(wOut+1) + l];
+            outValue += gradOutputIntData[t*(wOut+1) + l];
 
             // go to the next channel
-            gradOutputIntData += (h+1)*(w+1);
+            gradOutputIntData += (hOut+1)*(wOut+1);
         }
 
         gradInputData[x*w + y] = outValue;
@@ -557,13 +410,19 @@ __global__ void updateGradInputKernel(
 }
 
 __global__ void updateGradInputFracKernel(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const float *gradOutputData, const int gradOutputStrideRow,
+    const int gradOutputStrideChannel,
+    const int strideH, const int strideW) {
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
+
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     if (x < h and y < w) {
 
@@ -601,52 +460,52 @@ __global__ void updateGradInputFracKernel(
             if (needToChangeMin) yMinCurr = 0;
             if (needToChangeMax) yMaxCurr = w+66;
 
-            const int t = max(0, min(x+xMinCurr, h) );
-            const int b = max(0, min(x+xMaxCurr, h) );
-            const int l = max(0, min(y+yMinCurr, w) );
-            const int r = max(0, min(y+yMaxCurr, w) );
+            const int t = max(0, min(divFloor(x+xMinCurr + strideH - 1, strideH)    , hOut) );
+            const int b = max(0, min(divFloor(x+xMaxCurr - 1          , strideH) + 1, hOut) );
+            const int l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
+            const int r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
 
-            const int tAdv = x+xMinCurr-1 <  h ? max(0, min(t-1, h)) : t;
-            const int bAdv = x+xMaxCurr   >= 0 ? max(0, min(b+1, h)) : b;
-            const int lAdv = y+yMinCurr-1 <  w ? max(0, min(l-1, w)) : l;
-            const int rAdv = y+yMaxCurr   >= 0 ? max(0, min(r+1, w)) : r;
+            const int tAdv = modFloor(x+xMinCurr-1, strideH) == 0 and x+xMinCurr-1 <  h ? max(0, min(t-1, hOut)) : t;
+            const int bAdv = modFloor(x+xMaxCurr  , strideH) == 0 and x+xMaxCurr   >= 0 ? max(0, min(b+1, hOut)) : b;
+            const int lAdv = modFloor(y+yMinCurr-1, strideW) == 0 and y+yMinCurr-1 <  w ? max(0, min(l-1, wOut)) : l;
+            const int rAdv = modFloor(y+yMaxCurr  , strideW) == 0 and y+yMaxCurr   >= 0 ? max(0, min(r+1, wOut)) : r;
 
             // TODO: 1D grid
-            outValue += gradOutputIntData[b*(w+1) + r];
-            outValue -= gradOutputIntData[t*(w+1) + r];
-            outValue -= gradOutputIntData[b*(w+1) + l];
-            outValue += gradOutputIntData[t*(w+1) + l];
+            outValue += gradOutputIntData[b*(wOut+1) + r];
+            outValue -= gradOutputIntData[t*(wOut+1) + r];
+            outValue -= gradOutputIntData[b*(wOut+1) + l];
+            outValue += gradOutputIntData[t*(wOut+1) + l];
 
             // -- xMax border
             outValue +=
-                ( gradOutputIntData[bAdv*(w+1) + r]
-                - gradOutputIntData[b   *(w+1) + r]
-                - gradOutputIntData[bAdv*(w+1) + l]
-                + gradOutputIntData[b   *(w+1) + l]
+                ( gradOutputIntData[bAdv*(wOut+1) + r]
+                - gradOutputIntData[b   *(wOut+1) + r]
+                - gradOutputIntData[bAdv*(wOut+1) + l]
+                + gradOutputIntData[b   *(wOut+1) + l]
                 ) * xMaxCurrFrac;
 
             // -- yMax border
             outValue +=
-                ( gradOutputIntData[b*(w+1) + rAdv]
-                - gradOutputIntData[b*(w+1) + r   ]
-                - gradOutputIntData[t*(w+1) + rAdv]
-                + gradOutputIntData[t*(w+1) + r   ]
+                ( gradOutputIntData[b*(wOut+1) + rAdv]
+                - gradOutputIntData[b*(wOut+1) + r   ]
+                - gradOutputIntData[t*(wOut+1) + rAdv]
+                + gradOutputIntData[t*(wOut+1) + r   ]
                 ) * yMaxCurrFrac;
 
             // -- xMin border
             outValue +=
-                ( gradOutputIntData[t   *(w+1) + r]
-                - gradOutputIntData[tAdv*(w+1) + r]
-                - gradOutputIntData[t   *(w+1) + l]
-                + gradOutputIntData[tAdv*(w+1) + l]
+                ( gradOutputIntData[t   *(wOut+1) + r]
+                - gradOutputIntData[tAdv*(wOut+1) + r]
+                - gradOutputIntData[t   *(wOut+1) + l]
+                + gradOutputIntData[tAdv*(wOut+1) + l]
                 ) * xMinCurrFrac;
 
             // -- yMin border
             outValue +=
-                ( gradOutputIntData[b*(w+1) + l   ]
-                - gradOutputIntData[b*(w+1) + lAdv]
-                - gradOutputIntData[t*(w+1) + l   ]
-                + gradOutputIntData[t*(w+1) + lAdv]
+                ( gradOutputIntData[b*(wOut+1) + l   ]
+                - gradOutputIntData[b*(wOut+1) + lAdv]
+                - gradOutputIntData[t*(wOut+1) + l   ]
+                + gradOutputIntData[t*(wOut+1) + lAdv]
                 ) * yMinCurrFrac;
 
             // -- corner pixels
@@ -691,7 +550,7 @@ __global__ void updateGradInputFracKernel(
                     gradOutputData[tAdv*gradOutputStrideRow + lAdv]);
 
             // go to the next channel
-            gradOutputIntData += (h+1)*(w+1);
+            gradOutputIntData += (hOut+1)*(wOut+1);
             gradOutputData += gradOutputStrideChannel;
         }
 
@@ -700,17 +559,11 @@ __global__ void updateGradInputFracKernel(
 }
 
 void updateGradInputCuda(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
     const int strideH, const int strideW) {
-
-    if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputCuda(
-            gradOutputIntData, gradInputData, h, w, nWindows,
-            xMin, xMax, yMin, yMax, strideH, strideW);
-        return;
-    }
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
@@ -720,24 +573,17 @@ void updateGradInputCuda(
     updateGradInputKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
-        xMin, xMax, yMin, yMax);
+        xMin, xMax, yMin, yMax,
+        strideH, strideW);
 }
 
 void updateGradInputFracCuda(
-    float *gradOutputIntData, float *gradInputData,
-    int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
+    const float *gradOutputIntData, float * const gradInputData,
+    const int h, const int w, const int nWindows,
+    const float *xMin, const float *xMax, const float *yMin, float *yMax,
+    const float *gradOutputData, const int gradOutputStrideRow,
+    const int gradOutputStrideChannel,
     const int strideH, const int strideW) {
-
-    if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputFracCuda(
-            gradOutputIntData, gradInputData, h, w, nWindows,
-            xMin, xMax, yMin, yMax,
-            gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
-            strideH, strideW);
-        return;
-    }
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid(
@@ -748,7 +594,8 @@ void updateGradInputFracCuda(
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
-        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
+        strideH, strideW);
 }
 
 /************************ accGradParameters ************************/
@@ -757,16 +604,24 @@ __global__ void xMaxDeltaIntegralFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         // const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
@@ -816,7 +671,7 @@ __global__ void xMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[xOut*wOut + yOut] *= delta;
     }
 }
 
@@ -824,16 +679,24 @@ __global__ void xMinDeltaIntegralFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
@@ -883,7 +746,7 @@ __global__ void xMinDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMinInt >= 1 and x+xMinInt < h);
-        tmpArray[(x-1)*w + (y-1)] *= -delta;
+        tmpArray[xOut*wOut + yOut] *= -delta;
     }
 }
 
@@ -891,16 +754,24 @@ __global__ void yMaxDeltaIntegralFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         const float xMinFrac = xMinInt-xMin[windowIdx]+1;
@@ -950,7 +821,7 @@ __global__ void yMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[xOut*wOut + yOut] *= delta;
     }
 }
 
@@ -958,16 +829,24 @@ __global__ void yMinDeltaIntegralFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         const float xMinFrac = xMinInt-xMin[windowIdx]+1;
@@ -1017,58 +896,62 @@ __global__ void yMinDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt-1, w))];
 
         delta *= (y+yMinInt >= 1 and y+yMinInt < w);
-        tmpArray[(x-1)*w + (y-1)] *= -delta;
+        tmpArray[xOut*wOut + yOut] *= -delta;
     }
 }
 
 void backwardFracCuda(
-    float *intData, float *tmpArray,
-    int nWindows, int h, int w,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow,
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
+    const float *inData, const int inDataStrideRow,
     const int strideH, const int strideW) {
 
-    if (strideH != 1 or strideW != 1) {
-        strided::backwardFracCuda(
-            intData, tmpArray, nWindows, h, w,
-            xMin, xMax, yMin, yMax, inData, inDataStrideRow,
-            strideH, strideW);
-        return;
-    }
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
+    dim3 dimGrid((nWindows * hOut * wOut + dimBlock.x - 1) / dimBlock.x);
 
     xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
-        xMax, yMin, yMax, inData, inDataStrideRow);
+        intData, tmpArray + 0*nWindows*hOut*wOut, nWindows, h, w,
+        xMax, yMin, yMax, inData, inDataStrideRow, strideH, strideW);
 
     xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
-        xMin, yMin, yMax, inData, inDataStrideRow);
+        intData, tmpArray + 1*nWindows*hOut*wOut, nWindows, h, w,
+        xMin, yMin, yMax, inData, inDataStrideRow, strideH, strideW);
 
     yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
-        xMin, xMax, yMax, inData, inDataStrideRow);
+        intData, tmpArray + 2*nWindows*hOut*wOut, nWindows, h, w,
+        xMin, xMax, yMax, inData, inDataStrideRow, strideH, strideW);
 
     yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
-        xMin, xMax, yMin, inData, inDataStrideRow);
+        intData, tmpArray + 3*nWindows*hOut*wOut, nWindows, h, w,
+        xMin, xMax, yMin, inData, inDataStrideRow, strideH, strideW);
 }
 
 __global__ void xMaxDeltaIntegralKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMax, const float *yMin, const float *yMax) {
+    const float *xMax, const float *yMin, const float *yMax,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         // const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         const int yMinInt = (int)ceil(yMin[windowIdx]-1);
@@ -1091,23 +974,31 @@ __global__ void xMaxDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[xOut*wOut + yOut] *= delta;
     }
 }
 
 __global__ void xMinDeltaIntegralKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *yMin, const float *yMax) {
+    const float *xMin, const float *yMin, const float *yMax,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         const int yMinInt = (int)ceil(yMin[windowIdx]-1);
@@ -1130,23 +1021,31 @@ __global__ void xMinDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMinInt >= 1 and x+xMinInt < h);
-        tmpArray[(x-1)*w + (y-1)] *= -delta;
+        tmpArray[xOut*wOut + yOut] *= -delta;
     }
 }
 
 __global__ void yMaxDeltaIntegralKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *xMax, const float *yMax) {
+    const float *xMin, const float *xMax, const float *yMax,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         // const int yMinInt = (int)ceil(yMin[windowIdx]-1);
@@ -1169,23 +1068,31 @@ __global__ void yMaxDeltaIntegralKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[xOut*wOut + yOut] *= delta;
     }
 }
 
 __global__ void yMinDeltaIntegralKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *xMax, const float *yMin) {
+    const float *xMin, const float *xMax, const float *yMin,
+    const int strideH, const int strideW) {
  
+    // TODO: use block dim instead
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
+    
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = id % w + 1; id /= w; // 1-indexed
-    const int x = id % h + 1; id /= h; // 1-indexed
+    const int yOut = id % wOut; id /= wOut; // 0-indexed
+    const int xOut = id % hOut; id /= hOut; // 0-indexed
     const int & windowIdx = id;
 
-    if (windowIdx < nWindows and x <= h and y <= w) {
+    if (windowIdx < nWindows and xOut < hOut and yOut < wOut) {
 
-        tmpArray += windowIdx * h * w;
+        const int x = xOut*strideH + 1;
+        const int y = yOut*strideW + 1;
+
+        tmpArray += windowIdx * hOut * wOut;
 
         const int xMinInt = (int)ceil(xMin[windowIdx]-1);
         const int yMinInt = (int)ceil(yMin[windowIdx]-1);
@@ -1208,92 +1115,38 @@ __global__ void yMinDeltaIntegralKernel(
                   + max(0,min(y+yMinInt-1, w-1))];
 
         delta *= (y+yMinInt >= 1 and y+yMinInt < w);
-        tmpArray[(x-1)*w + (y-1)] *= -delta;
+        tmpArray[xOut*wOut + yOut] *= -delta;
     }
 }
 
 void backwardCuda(
-    float *intData, float *tmpArray,
-    int nWindows, int h, int w,
-    float *xMin, float *xMax, float *yMin, float *yMax,
+    const float *intData, float *tmpArray,
+    const int nWindows, const int h, const int w,
+    const float * const xMin, const float * const xMax,
+    const float * const yMin, const float * const yMax,
     const int strideH, const int strideW) {
 
-    if (strideH != 1 or strideW != 1) {
-        strided::backwardCuda(
-            intData, tmpArray, nWindows, h, w,
-            xMin, xMax, yMin, yMax, strideH, strideW);
-        return;
-    }
+    const int hOut = (h + strideH - 1) / strideH;
+    const int wOut = (w + strideW - 1) / strideW;
 
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
+    dim3 dimGrid((nWindows * hOut * wOut + dimBlock.x - 1) / dimBlock.x);
 
     xMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 0*nWindows*h*w,
-        nWindows, h, w, xMax, yMin, yMax);
+        intData, tmpArray + 0*nWindows*hOut*wOut,
+        nWindows, h, w, xMax, yMin, yMax, strideH, strideW);
 
     xMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 1*nWindows*h*w,
-        nWindows, h, w, xMin, yMin, yMax);
+        intData, tmpArray + 1*nWindows*hOut*wOut,
+        nWindows, h, w, xMin, yMin, yMax, strideH, strideW);
 
     yMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 2*nWindows*h*w,
-        nWindows, h, w, xMin, xMax, yMax);
+        intData, tmpArray + 2*nWindows*hOut*wOut,
+        nWindows, h, w, xMin, xMax, yMax, strideH, strideW);
 
     yMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
-        intData, tmpArray + 3*nWindows*h*w,
-        nWindows, h, w, xMin, xMax, yMin);
+        intData, tmpArray + 3*nWindows*hOut*wOut,
+        nWindows, h, w, xMin, xMax, yMin, strideH, strideW);
 }
 
-/************************ Other stuff ************************/
-
-__global__ void dirtyFixWindowsKernel(
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    const int size, const float h, const float w, const float minWidth) {
-
-    int idx = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
-
-    if (idx < 2*size) {
-        float paramMin, paramMax;
-
-        if (idx < size) {
-            paramMin = max(-h+1, min(h-1, xMin[idx]));
-            paramMax = max(-h+1, min(h-1, xMax[idx]));
-
-            if (paramMin + minWidth - 0.99 > paramMax) {
-                const float mean = 0.5 * (paramMin + paramMax);
-                paramMin = mean - 0.5 * (minWidth - 0.9);
-                paramMax = mean + 0.5 * (minWidth - 0.9);
-            }
-
-            xMin[idx] = paramMin;
-            xMax[idx] = paramMax;
-        } else {
-            idx -= size;
-            paramMin = max(-w+1, min(w-1, yMin[idx]));
-            paramMax = max(-w+1, min(w-1, yMax[idx]));
-
-            if (paramMin + minWidth - 0.99 > paramMax) {
-                const float mean = 0.5 * (paramMin + paramMax);
-                paramMin = mean - 0.5 * (minWidth - 0.9);
-                paramMax = mean + 0.5 * (minWidth - 0.9);
-            }
-
-            yMin[idx] = paramMin;
-            yMax[idx] = paramMax;
-        }
-    }
-}
-
-void dirtyFixWindows(
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    int size, int h, int w, float minWidth) {
-
-    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((2*size + dimBlock.x - 1) / dimBlock.x);
-
-    dirtyFixWindowsKernel <<<dimGrid, dimBlock>>> (
-        xMin, xMax, yMin, yMax, size, (float)h, (float)w, minWidth);
-}
-
-} // extern "C"
+} // namespace
