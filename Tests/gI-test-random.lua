@@ -4,12 +4,12 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1514636930
+-- seed = 1515082363
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'corner' -- 'corner' | 'border' | 'inner'
+local testType = 'inner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -28,7 +28,7 @@ local function applyStride(k, stride)
     return math.ceil(k / stride)
 end
 
-int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
+int = IntegralSmartNorm(2, 1, h, w, strideH, strideW)
 
 int.exact = true
 int.smart = true
@@ -87,7 +87,7 @@ for planeIdx = 1,int.nInputPlane do
 end
 int:_reparametrize(false)
 
-if true or iter == 5 then
+if iter == 14 or true then
 int:type(dtype)
 int:forward(img)
 target:add(int.output)
@@ -153,6 +153,7 @@ gnuplot.plot(
 
 gnuplot.grid(true)
 end
+-- sys.sleep(0.05)
 end -- for
 
 print('Seed was ' .. seed)

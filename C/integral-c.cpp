@@ -506,10 +506,10 @@ void updateGradInputFrac(
                 l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
                 r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
 
-                tAdv = modFloor(x+xMinCurr-1, strideH) == 0 ? max(0, min(t-1, hOut)) : t;
-                bAdv = modFloor(x+xMaxCurr  , strideH) == 0 ? max(0, min(b+1, hOut)) : b;
-                lAdv = modFloor(y+yMinCurr-1, strideW) == 0 ? max(0, min(l-1, wOut)) : l;
-                rAdv = modFloor(y+yMaxCurr  , strideW) == 0 ? max(0, min(r+1, wOut)) : r;
+                tAdv = modFloor(x+xMinCurr-1, strideH) == 0 and x+xMinCurr-1 <  h ? max(0, min(t-1, hOut)) : t;
+                bAdv = modFloor(x+xMaxCurr  , strideH) == 0 and x+xMaxCurr   >= 0 ? max(0, min(b+1, hOut)) : b;
+                lAdv = modFloor(y+yMinCurr-1, strideW) == 0 and y+yMinCurr-1 <  w ? max(0, min(l-1, wOut)) : l;
+                rAdv = modFloor(y+yMaxCurr  , strideW) == 0 and y+yMaxCurr   >= 0 ? max(0, min(r+1, wOut)) : r;
 
                 gradInput[x*w + y] += 
                     ( gradOutputInt[b*(wOut+1) + r]

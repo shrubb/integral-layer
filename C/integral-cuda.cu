@@ -633,10 +633,10 @@ __global__ void updateGradInputFracKernel(
             const int l = max(0, min(divFloor(y+yMinCurr + strideW - 1, strideW)    , wOut) );
             const int r = max(0, min(divFloor(y+yMaxCurr - 1          , strideW) + 1, wOut) );
 
-            const int tAdv = modFloor(x+xMinCurr-1, strideH) == 0 ? max(0, min(t-1, hOut)) : t;
-            const int bAdv = modFloor(x+xMaxCurr  , strideH) == 0 ? max(0, min(b+1, hOut)) : b;
-            const int lAdv = modFloor(y+yMinCurr-1, strideW) == 0 ? max(0, min(l-1, wOut)) : l;
-            const int rAdv = modFloor(y+yMaxCurr  , strideW) == 0 ? max(0, min(r+1, wOut)) : r;
+            const int tAdv = modFloor(x+xMinCurr-1, strideH) == 0 and x+xMinCurr-1 <  h ? max(0, min(t-1, hOut)) : t;
+            const int bAdv = modFloor(x+xMaxCurr  , strideH) == 0 and x+xMaxCurr   >= 0 ? max(0, min(b+1, hOut)) : b;
+            const int lAdv = modFloor(y+yMinCurr-1, strideW) == 0 and y+yMinCurr-1 <  w ? max(0, min(l-1, wOut)) : l;
+            const int rAdv = modFloor(y+yMaxCurr  , strideW) == 0 and y+yMaxCurr   >= 0 ? max(0, min(r+1, wOut)) : r;
 
             // TODO: 1D grid
             outValue += gradOutputIntData[b*(wOut+1) + r];
