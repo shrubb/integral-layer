@@ -124,6 +124,9 @@ do
     local updateOutputGPU, accGradParametersGPU
 
     function IntegralSmartNorm:__init(nInputPlane, nWindows, h, w, strideH, strideW)
+        strideH = strideH or 1
+        strideW = strideW or 1
+
         -- nWindows is the number of box filters per channel
         parent.__init(self)
         self.nInputPlane, self.nWindows = nInputPlane, nWindows
