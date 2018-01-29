@@ -238,7 +238,16 @@ do
                 'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax', 'onesIntegral', 'ones',
                 'outputOnes', 'cdiv', 'xMinFrac', 'xMaxFrac', 'yMinFrac', 'yMaxFrac',
                 'integralGradOutput'} do
-            self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
+            if self[param] then
+                if self[param].storageOffset then
+                    -- print('self.' .. param .. '.storageOffset = ' .. self[param]:storageOffset())
+                end
+                -- print('self.' .. param .. ' is ' .. self[param]:type() .. ', converting to ' .. type)
+                self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
+                if self[param].storageOffset then
+                    -- print('self.' .. param .. '.storageOffset = ' .. self[param]:storageOffset() .. '\n')
+                end
+            end
         end
 
         if self.backpropHelper then
@@ -251,14 +260,13 @@ do
 
     -- overload
     function IntegralSmartNorm:write(file)
-        file:writeObject(self.nInputPlane)
-        file:writeObject(self.nWindows)
-        file:writeObject(self.h)
-        file:writeObject(self.w)
-        file:writeObject(self.xMin)
-        file:writeObject(self.xMax)
-        file:writeObject(self.yMin)
-        file:writeObject(self.yMax)
+        for _, param in ipairs{
+            'nInputPlane', 'nWindows', 'h', 'w',
+            'xMin', 'xMax', 'yMin', 'yMax',
+            'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'} do
+
+            file:writeObject(self[param])
+        end
     end
 
     -- overload
@@ -269,10 +277,12 @@ do
         local w           = file:readObject()
         
         self:__init(nInputPlane, nWindows, h, w)
-        self.xMin = file:readObject()
-        self.xMax = file:readObject()
-        self.yMin = file:readObject()
-        self.yMax = file:readObject()
+        for _, param in ipairs{
+            'xMin', 'xMax', 'yMin', 'yMax',
+            'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'} do
+
+            self[param] = file:readObject()
+        end
 
         self:type(self.xMin:type())
     end
