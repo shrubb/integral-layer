@@ -840,7 +840,7 @@ do
 
                         if self.exact then
                             if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputFracCuda
+                                updateGradInputCFunction = CUDA_lib.updateGradInputFracVarScaleCuda
                             else
                                 error('NYI')
                             end
@@ -855,10 +855,13 @@ do
                                 torch.data(self.yMax[inPlaneIdx]),
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                                 gradOutput:stride(4), gradOutput:stride(3),
-                                self.strideH, self.strideW)
+                                self.strideH, self.strideW,
+                                torch.data(self.scaleTensor))
                         else
+                        	error('NYI')
+
                             if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputCuda
+                                updateGradInputCFunction = CUDA_lib.updateGradInputVarScaleCuda
                             else
                                 error('NYI')
                             end
@@ -871,11 +874,14 @@ do
                                 torch.data(self.xMax[inPlaneIdx]),
                                 torch.data(self.yMin[inPlaneIdx]),
                                 torch.data(self.yMax[inPlaneIdx]),
-                                self.strideH, self.strideW)
+                                self.strideH, self.strideW,
+                                torch.data(self.scaleTensor))
                         end
                     end
                 end
             else -- CPU
+            	error('NYI')
+            	
                 self.gradInput:zero()
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
                 self.integralDouble:resize(1, self.hOut+1, self.wOut+1) -- temporary buffer for OpenCV

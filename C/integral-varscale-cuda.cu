@@ -127,7 +127,7 @@ __global__ void forwardNoNormReplicateFracKernel(
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
-    const float *scaleData) {
+    const float *const scaleData) {
 
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w; id /= w;
@@ -293,7 +293,7 @@ void forwardNoNormReplicateFracVarScaleCuda(
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
-    const int strideH, const int strideW, const float *scaleData) {
+    const int strideH, const int strideW, const float *const scaleData) {
 
     if (strideH != 1 or strideW != 1) {
         // TODO
@@ -382,27 +382,30 @@ __global__ void updateGradInputFracKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel) {
+    float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
+    const float *const scaleData) {
 
     const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
 
     if (x < h and y < w) {
 
+        const float scale = scaleData[x*w + y];
+
         int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
         double outValue = 0;
 
         for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
 
-            xMinCurr = (int)ceil(-xMax[windowIdx]);
-            yMinCurr = (int)ceil(-yMax[windowIdx]);
-            const float xMinCurrFrac = (float)xMinCurr + xMax[windowIdx];
-            const float yMinCurrFrac = (float)yMinCurr + yMax[windowIdx];
+            xMinCurr = (int)ceil(-xMax[windowIdx] * scale);
+            yMinCurr = (int)ceil(-yMax[windowIdx] * scale);
+            const float xMinCurrFrac = (float)xMinCurr + xMax[windowIdx] * scale;
+            const float yMinCurrFrac = (float)yMinCurr + yMax[windowIdx] * scale;
 
-            xMaxCurr = (int)floor(-xMin[windowIdx]) + 1;
-            yMaxCurr = (int)floor(-yMin[windowIdx]) + 1;
-            const float xMaxCurrFrac = -xMin[windowIdx] + 1 - xMaxCurr;
-            const float yMaxCurrFrac = -yMin[windowIdx] + 1 - yMaxCurr;
+            xMaxCurr = (int)floor(-xMin[windowIdx] * scale) + 1;
+            yMaxCurr = (int)floor(-yMin[windowIdx] * scale) + 1;
+            const float xMaxCurrFrac = -xMin[windowIdx] * scale + 1 - xMaxCurr;
+            const float yMaxCurrFrac = -yMin[windowIdx] * scale + 1 - yMaxCurr;
 
             // The following code block implements these lines
             // as if they were executed simultaneously (see `void updateGradInputFrac()`):
@@ -521,11 +524,12 @@ __global__ void updateGradInputFracKernel(
     }
 }
 
+// TODO
 void updateGradInputCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    const int strideH, const int strideW) {
+    const int strideH, const int strideW, const float *const scaleData) {
 
     if (strideH != 1 or strideW != 1) {
         // TODO
@@ -553,7 +557,7 @@ void updateGradInputFracCuda(
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
-    const int strideH, const int strideW) {
+    const int strideH, const int strideW, const float *const scaleData) {
 
     if (strideH != 1 or strideW != 1) {
         // TODO
@@ -576,7 +580,8 @@ void updateGradInputFracCuda(
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
-        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
+        scaleData);
 }
 
 /************************ accGradParameters ************************/
