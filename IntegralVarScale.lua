@@ -127,7 +127,7 @@ do
     local updateOutputCPU, accGradParametersCPU
     local updateOutputGPU, accGradParametersGPU
 
-    function IntegralVarScale:__init(nInputPlane, nWindows, h, w, strideH, strideW, scaleTensor)
+    function IntegralVarScale:__init(nInputPlane, nWindows, h, w, strideH, strideW, scaleModule)
         strideH = strideH or 1
         strideW = strideW or 1
 
@@ -136,8 +136,8 @@ do
         self.nInputPlane, self.nWindows = nInputPlane, nWindows
         self.h, self.w, self.strideH, self.strideW = h, w, strideH, strideW
         
-        assert(torch.isTensor(scaleTensor))
-        self.scaleTensor = scaleTensor
+        assert(scaleModule.output)
+        self.scaleModule = scaleModule
 
         self.reparametrization = self.w / 0.64 --583
 
@@ -267,7 +267,7 @@ do
         file:writeObject(self.xMax)
         file:writeObject(self.yMin)
         file:writeObject(self.yMax)
-        file:writeObject(self.scaleTensor)
+        file:writeObject(self.scaleModule)
     end
 
     -- overload
@@ -284,7 +284,7 @@ do
         self.yMax = file:readObject()
 
         self:type(self.xMin:type())
-        self.scaleTensor = file:readObject()
+        self.scaleModule = file:readObject()
     end
 
     -- reparametrization
@@ -624,9 +624,9 @@ do
 
     function updateOutputGPU(self, input)
     	assert(
-    		self.scaleTensor:nDimension() == 2 and 
-    		self.scaleTensor:size(1) == self.h and 
-    		self.scaleTensor:size(2) == self.w)
+    		self.scaleModule.output:nDimension() == 2 and 
+    		self.scaleModule.output:size(1) == self.h and 
+    		self.scaleModule.output:size(2) == self.w)
 
     	-- TODO: do self;_reparametrize(false) in case an error is thrown during updateOutput
         self:_reparametrize(true)
@@ -656,7 +656,7 @@ do
         assert(input:size(3) == self.h and input:size(4) == self.w)
 
         -- for C function safety
-        assert(self.scaleTensor:stride(1) == self.w)
+        assert(self.scaleModule.output:stride(1) == self.w)
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
@@ -689,7 +689,7 @@ do
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
                         torch.data(self.ones), self.ones:stride(1), 0,
-                        self.strideH, self.strideW, torch.data(self.scaleTensor))
+                        self.strideH, self.strideW, torch.data(self.scaleModule.output))
                 else
                 	error('NYI')
                     if self.replicate then
@@ -749,7 +749,7 @@ do
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
                         torch.data(input), input:stride(3), input:stride(2),
-                        self.strideH, self.strideW, torch.data(self.scaleTensor))
+                        self.strideH, self.strideW, torch.data(self.scaleModule.output))
                 else
                 	error('NYI')
                     if self.replicate then
@@ -856,7 +856,7 @@ do
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                                 gradOutput:stride(4), gradOutput:stride(3),
                                 self.strideH, self.strideW,
-                                torch.data(self.scaleTensor))
+                                torch.data(self.scaleModule.output))
                         else
                         	error('NYI')
 
@@ -875,13 +875,13 @@ do
                                 torch.data(self.yMin[inPlaneIdx]),
                                 torch.data(self.yMax[inPlaneIdx]),
                                 self.strideH, self.strideW,
-                                torch.data(self.scaleTensor))
+                                torch.data(self.scaleModule.output))
                         end
                     end
                 end
             else -- CPU
             	error('NYI')
-            	
+
                 self.gradInput:zero()
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
                 self.integralDouble:resize(1, self.hOut+1, self.wOut+1) -- temporary buffer for OpenCV
@@ -965,6 +965,7 @@ do
     end
 
     function accGradParametersCPU(self, input, gradOutput, scale)
+    	error('NYI')
         scale = scale or 1
 
         self:_reparametrize(true)
@@ -1117,7 +1118,7 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        accGradParametersCFunction = CUDA_lib.backwardFracCuda
+                        accGradParametersCFunction = CUDA_lib_varscale.backwardFracVarScaleCuda
                     else
                         error('NYI')
                     end
@@ -1149,7 +1150,8 @@ do
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
                             torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
-                            inData, inStrideRow, self.strideH, self.strideW) --, inStrideChannel)
+                            inData, inStrideRow, self.strideH, self.strideW,
+                            torch.data(self.scaleModule.output))
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
@@ -1160,7 +1162,7 @@ do
                     end
                 else
                     if self.replicate then
-                        accGradParametersCFunction = CUDA_lib.backwardCuda
+                        accGradParametersCFunction = CUDA_lib_varscale.backwardVarScaleCuda
                     else
                         error('NYI')
                     end
@@ -1179,7 +1181,8 @@ do
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
                             torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
-                            self.strideH, self.strideW)
+                            self.strideH, self.strideW,
+                            torch.data(self.scaleModule.output))
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 

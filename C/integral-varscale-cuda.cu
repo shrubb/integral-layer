@@ -83,7 +83,7 @@ inline void __cudaCheckError( const char *file, const int line )
 /************************ updateOutput ************************/
 
 // TODO
-__global__ void forwardNoNormReplicateKernel(
+__global__ void forwardNoNormReplicateVarScaleKernel(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -122,7 +122,7 @@ __global__ void forwardNoNormReplicateKernel(
     }
 }
 
-__global__ void forwardNoNormReplicateFracKernel(
+__global__ void forwardNoNormReplicateFracVarScaleKernel(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -257,7 +257,7 @@ __global__ void forwardNoNormReplicateFracKernel(
 extern "C" {
 
 // TODO
-void forwardNoNormReplicateCuda(
+void forwardNoNormReplicateVarScaleCuda(
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -282,7 +282,7 @@ void forwardNoNormReplicateCuda(
         (w + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows,
         xMin, xMax, yMin, yMax);
@@ -311,7 +311,7 @@ void forwardNoNormReplicateFracVarScaleCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
 
-    forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
@@ -320,7 +320,7 @@ void forwardNoNormReplicateFracVarScaleCuda(
 
 /************************ updateGradInput ************************/
 
-__global__ void updateGradInputKernel(
+__global__ void updateGradInputVarScaleKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -378,7 +378,7 @@ __global__ void updateGradInputKernel(
     }
 }
 
-__global__ void updateGradInputFracKernel(
+__global__ void updateGradInputFracVarScaleKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -525,7 +525,7 @@ __global__ void updateGradInputFracKernel(
 }
 
 // TODO
-void updateGradInputCuda(
+void updateGradInputVarScaleCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -546,13 +546,13 @@ void updateGradInputCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputVarScaleKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
-void updateGradInputFracCuda(
+void updateGradInputFracVarScaleCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -576,7 +576,7 @@ void updateGradInputFracCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputFracKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
@@ -586,11 +586,12 @@ void updateGradInputFracCuda(
 
 /************************ accGradParameters ************************/
 
-__global__ void xMaxDeltaIntegralFracKernel(
+__global__ void xMaxDeltaIntegralFracVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -601,17 +602,19 @@ __global__ void xMaxDeltaIntegralFracKernel(
 
         tmpArray += windowIdx * h * w;
 
-        // const int xMinInt = (int)ceil(xMin[windowIdx]-1);
-        // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
+        const float scale = scaleData[x*w + y];
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
-        const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+        // const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
+        // const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]);
-        // const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
+        const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]);
-        const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
+        // const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
+        const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
 
         // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
         //                      inData[
@@ -648,16 +651,18 @@ __global__ void xMaxDeltaIntegralFracKernel(
             intData[max(0,min(x+xMaxInt  , h))*(w+1)
                   + max(0,min(y+yMinInt, w))];
 
-        delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
+        delta *= (x+xMaxInt >= 1 and x+xMaxInt < h) * scale;
+        // note multiplication of `delta` by `scale`
         tmpArray[(x-1)*w + (y-1)] *= delta;
     }
 }
 
-__global__ void xMinDeltaIntegralFracKernel(
+__global__ void xMinDeltaIntegralFracVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -668,17 +673,19 @@ __global__ void xMinDeltaIntegralFracKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
-        // const float xMinFrac = xMinInt-xMin[windowIdx]+1;
+        const float scale = scaleData[x*w + y];
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
-        const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
+        // const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
 
-        // const int xMaxInt = (int)floor(xMax[windowIdx]);
-        // const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
+        const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]);
-        const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+        // const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
+        // const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
+        const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
 
         const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
                              inData[
@@ -715,16 +722,18 @@ __global__ void xMinDeltaIntegralFracKernel(
             intData[max(0,min(x+xMinInt-1, h))*(w+1)
                   + max(0,min(y+yMinInt, w))];
 
-        delta *= (x+xMinInt >= 1 and x+xMinInt < h);
+        delta *= (x+xMinInt >= 1 and x+xMinInt < h) * scale;
+        // note multiplication of `delta` by `scale
         tmpArray[(x-1)*w + (y-1)] *= -delta;
     }
 }
 
-__global__ void yMaxDeltaIntegralFracKernel(
+__global__ void yMaxDeltaIntegralFracVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -735,17 +744,19 @@ __global__ void yMaxDeltaIntegralFracKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
-        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
+        const float scale = scaleData[x*w + y];
 
-        // const int yMinInt = (int)ceil(yMin[windowIdx]-1);
-        // const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
+        const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]);
-        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+        // const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
+        // const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]);
-        // const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
+        const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
+        // const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
 
         // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
         //                      inData[
@@ -782,16 +793,18 @@ __global__ void yMaxDeltaIntegralFracKernel(
             intData[max(0,min(x+xMinInt, h))*(w+1)
                   + max(0,min(y+yMaxInt  , w))];
 
-        delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
+        delta *= (y+yMaxInt >= 1 and y+yMaxInt < w) * scale;
+        // note multiplication of `delta` by `scale
         tmpArray[(x-1)*w + (y-1)] *= delta;
     }
 }
 
-__global__ void yMinDeltaIntegralFracKernel(
+__global__ void yMinDeltaIntegralFracVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
-    const float *inData, const int inDataStrideRow) {
+    const float *inData, const int inDataStrideRow,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -802,17 +815,19 @@ __global__ void yMinDeltaIntegralFracKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]-1);
-        const float xMinFrac = xMinInt-xMin[windowIdx]+1;
+        const float scale = scaleData[x*w + y];
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]-1);
-        // const float yMinFrac = yMinInt-yMin[windowIdx]+1;
+        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
+        const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]);
-        const float xMaxFrac = xMax[windowIdx]-xMaxInt;
+        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
+        // const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
 
-        // const int yMaxInt = (int)floor(yMax[windowIdx]);
-        // const float yMaxFrac = yMax[windowIdx]-yMaxInt;
+        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
+        const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+
+        // const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
+        // const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
 
         const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
                              inData[
@@ -849,17 +864,19 @@ __global__ void yMinDeltaIntegralFracKernel(
             intData[max(0,min(x+xMinInt, h))*(w+1)
                   + max(0,min(y+yMinInt-1, w))];
 
-        delta *= (y+yMinInt >= 1 and y+yMinInt < w);
+        delta *= (y+yMinInt >= 1 and y+yMinInt < w) * scale;
+        // note multiplication of `delta` by `scale
         tmpArray[(x-1)*w + (y-1)] *= -delta;
     }
 }
 
-void backwardFracCuda(
+void backwardFracVarScaleCuda(
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow,
-    const int strideH, const int strideW) {
+    const int strideH, const int strideW,
+    const float *const scaleData) {
 
     if (strideH != 1 or strideW != 1) {
         // TODO
@@ -875,27 +892,28 @@ void backwardFracCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
-        xMax, yMin, yMax, inData, inDataStrideRow);
+        xMax, yMin, yMax, inData, inDataStrideRow, scaleData);
 
-    xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
-        xMin, yMin, yMax, inData, inDataStrideRow);
+        xMin, yMin, yMax, inData, inDataStrideRow, scaleData);
 
-    yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
-        xMin, xMax, yMax, inData, inDataStrideRow);
+        xMin, xMax, yMax, inData, inDataStrideRow, scaleData);
 
-    yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralFracVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
-        xMin, xMax, yMin, inData, inDataStrideRow);
+        xMin, xMax, yMin, inData, inDataStrideRow, scaleData);
 }
 
-__global__ void xMaxDeltaIntegralKernel(
+__global__ void xMaxDeltaIntegralVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMax, const float *yMin, const float *yMax) {
+    const float *xMax, const float *yMin, const float *yMax,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -931,10 +949,11 @@ __global__ void xMaxDeltaIntegralKernel(
     }
 }
 
-__global__ void xMinDeltaIntegralKernel(
+__global__ void xMinDeltaIntegralVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *yMin, const float *yMax) {
+    const float *xMin, const float *yMin, const float *yMax,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -970,10 +989,11 @@ __global__ void xMinDeltaIntegralKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralKernel(
+__global__ void yMaxDeltaIntegralVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *xMax, const float *yMax) {
+    const float *xMin, const float *xMax, const float *yMax,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -1009,10 +1029,11 @@ __global__ void yMaxDeltaIntegralKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralKernel(
+__global__ void yMinDeltaIntegralVarScaleKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
-    const float *xMin, const float *xMax, const float *yMin) {
+    const float *xMin, const float *xMax, const float *yMin,
+    const float *const scaleData) {
  
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
     const int y = id % w + 1; id /= w; // 1-indexed
@@ -1048,11 +1069,12 @@ __global__ void yMinDeltaIntegralKernel(
     }
 }
 
-void backwardCuda(
+void backwardVarScaleCuda(
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
-    const int strideH, const int strideW) {
+    const int strideH, const int strideW,
+    const float *const scaleData) {
 
     if (strideH != 1 or strideW != 1) {
         // TODO
@@ -1067,26 +1089,26 @@ void backwardCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 0*nWindows*h*w,
-        nWindows, h, w, xMax, yMin, yMax);
+        nWindows, h, w, xMax, yMin, yMax, scaleData);
 
-    xMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 1*nWindows*h*w,
-        nWindows, h, w, xMin, yMin, yMax);
+        nWindows, h, w, xMin, yMin, yMax, scaleData);
 
-    yMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 2*nWindows*h*w,
-        nWindows, h, w, xMin, xMax, yMax);
+        nWindows, h, w, xMin, xMax, yMax, scaleData);
 
-    yMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralVarScaleKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 3*nWindows*h*w,
-        nWindows, h, w, xMin, xMax, yMin);
+        nWindows, h, w, xMin, xMax, yMin, scaleData);
 }
 
 /************************ Other stuff ************************/
 
-__global__ void dirtyFixWindowsKernel(
+__global__ void dirtyFixWindowsVarScaleKernel(
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int size, const float h, const float w, const float minWidth) {
 
@@ -1124,14 +1146,14 @@ __global__ void dirtyFixWindowsKernel(
     }
 }
 
-void dirtyFixWindows(
+void dirtyFixWindowsVarScale(
     float *xMin, float *xMax, float *yMin, float *yMax,
     int size, int h, int w, float minWidth) {
 
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((2*size + dimBlock.x - 1) / dimBlock.x);
 
-    dirtyFixWindowsKernel <<<dimGrid, dimBlock>>> (
+    dirtyFixWindowsVarScaleKernel <<<dimGrid, dimBlock>>> (
         xMin, xMax, yMin, yMax, size, (float)h, (float)w, minWidth);
 }
 
