@@ -22,6 +22,7 @@ find_package(CUDA)
 
 if (CUDA_FOUND)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++11")
-    cuda_add_library(integral-cuda SHARED integral-cuda.cu integral-strided-cuda.cu) 
+    cuda_add_library(integral-cuda SHARED integral-cuda.cu integral-strided-cuda.cu)
+    cuda_add_library(integral-varscale-cuda SHARED integral-varscale-cuda.cu) # integral-strided-cuda.cu) 
     cuda_add_cublas_to_target(integral-cuda)
 endif()
