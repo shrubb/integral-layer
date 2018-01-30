@@ -109,7 +109,7 @@ void _initCublasHandleVarScale(); ]]
 local CUDA_lib, CUDA_lib_varscale
 
 if pcall(require, 'cutorch') then
-    CUDA_lib = ffi.load('C/lib/libintegralvarscale-cuda.so')
+    CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
     CUDA_lib._initCublasHandle();
 
     CUDA_lib_varscale = ffi.load('C/lib/libintegral-varscale-cuda.so')
@@ -631,7 +631,7 @@ do
     	-- TODO: do self;_reparametrize(false) in case an error is thrown during updateOutput
         self:_reparametrize(true)
 
-        CUDA_lib.dirtyFixWindowsVarScale(
+        CUDA_lib_varscale.dirtyFixWindowsVarScale(
             torch.data(self.xMin), torch.data(self.xMax),
             torch.data(self.yMin), torch.data(self.yMax),
             self.xMin:nElement(), self.h, self.w, self.exact and 1 or 2)
@@ -737,7 +737,7 @@ do
 
                 if self.exact then
                     if self.replicate then
-                        forwardCudaFunction = CUDA_lib.forwardNoNormReplicateFracVarScaleCuda
+                        forwardCudaFunction = CUDA_lib_varscale.forwardNoNormReplicateFracVarScaleCuda
                     else
                         error('NYI')
                         forwardCudaFunction = CUDA_lib.forwardNoNormFracCuda
@@ -840,7 +840,7 @@ do
 
                         if self.exact then
                             if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputFracVarScaleCuda
+                                updateGradInputCFunction = CUDA_lib_varscale.updateGradInputFracVarScaleCuda
                             else
                                 error('NYI')
                             end
@@ -861,7 +861,7 @@ do
                         	error('NYI')
 
                             if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputVarScaleCuda
+                                updateGradInputCFunction = CUDA_lib_varscale.updateGradInputVarScaleCuda
                             else
                                 error('NYI')
                             end

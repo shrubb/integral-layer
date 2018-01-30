@@ -80,6 +80,9 @@ inline void __cudaCheckError( const char *file, const int line )
     return;
 }
 
+#define upscaleMax(x) ((x + 0.5) * scale - 0.5)
+#define upscaleMin(x) ((x - 0.5) * scale + 0.5)
+
 /************************ updateOutput ************************/
 
 // TODO
@@ -151,15 +154,15 @@ __global__ void forwardNoNormReplicateFracVarScaleKernel(
 
         const float scale = scaleData[x*w + y];
 
-        const int   xMinCurr = (int)ceil(xMin[z] * scale);
-        const float xMinCurrFrac = (float)xMinCurr - xMin[z] * scale;
-        const int   yMinCurr = (int)ceil(yMin[z] * scale);
-        const float yMinCurrFrac = (float)yMinCurr - yMin[z] * scale;
+        const int   xMinCurr = (int)ceil(upscaleMin(xMin[z]));
+        const float xMinCurrFrac = (float)xMinCurr - upscaleMin(xMin[z]);
+        const int   yMinCurr = (int)ceil(upscaleMin(yMin[z]));
+        const float yMinCurrFrac = (float)yMinCurr - upscaleMin(yMin[z]);
 
-        const float xMaxCurrFrac = xMax[z] * scale - floor(xMax[z] * scale);
-        const int   xMaxCurr = (int)floor(xMax[z] * scale) + 1;
-        const float yMaxCurrFrac = yMax[z] * scale - floor(yMax[z] * scale);
-        const int   yMaxCurr = (int)floor(yMax[z] * scale) + 1;
+        const float xMaxCurrFrac = upscaleMax(xMax[z]) - floor(upscaleMax(xMax[z]));
+        const int   xMaxCurr = (int)floor(upscaleMax(xMax[z])) + 1;
+        const float yMaxCurrFrac = upscaleMax(yMax[z]) - floor(upscaleMax(yMax[z]));
+        const int   yMaxCurr = (int)floor(upscaleMax(yMax[z])) + 1;
 
         const int t = max(0, min(x+xMinCurr, h-1) );
         const int b = max(1, min(x+xMaxCurr, h)   );
@@ -397,15 +400,15 @@ __global__ void updateGradInputFracVarScaleKernel(
 
         for (int windowIdx = 0; windowIdx < nWindows; ++windowIdx) {
 
-            xMinCurr = (int)ceil(-xMax[windowIdx] * scale);
-            yMinCurr = (int)ceil(-yMax[windowIdx] * scale);
-            const float xMinCurrFrac = (float)xMinCurr + xMax[windowIdx] * scale;
-            const float yMinCurrFrac = (float)yMinCurr + yMax[windowIdx] * scale;
+            xMinCurr = (int)ceil(-upscaleMax(xMax[windowIdx]));
+            yMinCurr = (int)ceil(-upscaleMax(yMax[windowIdx]));
+            const float xMinCurrFrac = (float)xMinCurr + upscaleMax(xMax[windowIdx]);
+            const float yMinCurrFrac = (float)yMinCurr + upscaleMax(yMax[windowIdx]);
 
-            xMaxCurr = (int)floor(-xMin[windowIdx] * scale) + 1;
-            yMaxCurr = (int)floor(-yMin[windowIdx] * scale) + 1;
-            const float xMaxCurrFrac = -xMin[windowIdx] * scale + 1 - xMaxCurr;
-            const float yMaxCurrFrac = -yMin[windowIdx] * scale + 1 - yMaxCurr;
+            xMaxCurr = (int)floor(-upscaleMin(xMin[windowIdx])) + 1;
+            yMaxCurr = (int)floor(-upscaleMin(yMin[windowIdx])) + 1;
+            const float xMaxCurrFrac = -upscaleMin(xMin[windowIdx]) + 1 - xMaxCurr;
+            const float yMaxCurrFrac = -upscaleMin(yMin[windowIdx]) + 1 - yMaxCurr;
 
             // The following code block implements these lines
             // as if they were executed simultaneously (see `void updateGradInputFrac()`):
@@ -602,19 +605,19 @@ __global__ void xMaxDeltaIntegralFracVarScaleKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const float scale = scaleData[x*w + y];
+        const float scale = scaleData[(x-1)*w + (y-1)];
 
-        // const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
-        // const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
+        // const int xMinInt = (int)ceil(upscaleMin(xMin[windowIdx])-1);
+        // const float xMinFrac = xMinInt-upscaleMin(xMin[windowIdx])+1;
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
-        const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
+        const int yMinInt = (int)ceil(upscaleMin(yMin[windowIdx])-1);
+        const float yMinFrac = yMinInt-upscaleMin(yMin[windowIdx])+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
-        // const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+        const int xMaxInt = (int)floor(upscaleMax(xMax[windowIdx]));
+        // const float xMaxFrac = upscaleMax(xMax[windowIdx])-xMaxInt;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
-        const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
+        const int yMaxInt = (int)floor(upscaleMax(yMax[windowIdx]));
+        const float yMaxFrac = upscaleMax(yMax[windowIdx])-yMaxInt;
 
         // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
         //                      inData[
@@ -673,19 +676,19 @@ __global__ void xMinDeltaIntegralFracVarScaleKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const float scale = scaleData[x*w + y];
+        const float scale = scaleData[(x-1)*w + (y-1)];
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
-        // const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
+        const int xMinInt = (int)ceil(upscaleMin(xMin[windowIdx])-1);
+        // const float xMinFrac = xMinInt-upscaleMin(xMin[windowIdx])+1;
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
-        const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
+        const int yMinInt = (int)ceil(upscaleMin(yMin[windowIdx])-1);
+        const float yMinFrac = yMinInt-upscaleMin(yMin[windowIdx])+1;
 
-        // const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
-        // const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+        // const int xMaxInt = (int)floor(upscaleMax(xMax[windowIdx]));
+        // const float xMaxFrac = upscaleMax(xMax[windowIdx])-xMaxInt;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
-        const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
+        const int yMaxInt = (int)floor(upscaleMax(yMax[windowIdx]));
+        const float yMaxFrac = upscaleMax(yMax[windowIdx])-yMaxInt;
 
         const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
                              inData[
@@ -744,19 +747,19 @@ __global__ void yMaxDeltaIntegralFracVarScaleKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const float scale = scaleData[x*w + y];
+        const float scale = scaleData[(x-1)*w + (y-1)];
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
-        const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
+        const int xMinInt = (int)ceil(upscaleMin(xMin[windowIdx])-1);
+        const float xMinFrac = xMinInt-upscaleMin(xMin[windowIdx])+1;
 
-        // const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
-        // const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
+        // const int yMinInt = (int)ceil(upscaleMin(yMin[windowIdx])-1);
+        // const float yMinFrac = yMinInt-upscaleMin(yMin[windowIdx])+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
-        const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+        const int xMaxInt = (int)floor(upscaleMax(xMax[windowIdx]));
+        const float xMaxFrac = upscaleMax(xMax[windowIdx])-xMaxInt;
 
-        const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
-        // const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
+        const int yMaxInt = (int)floor(upscaleMax(yMax[windowIdx]));
+        // const float yMaxFrac = upscaleMax(yMax[windowIdx])-yMaxInt;
 
         // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
         //                      inData[
@@ -815,19 +818,19 @@ __global__ void yMinDeltaIntegralFracVarScaleKernel(
 
         tmpArray += windowIdx * h * w;
 
-        const float scale = scaleData[x*w + y];
+        const float scale = scaleData[(x-1)*w + (y-1)];
 
-        const int xMinInt = (int)ceil(xMin[windowIdx]*scale-1);
-        const float xMinFrac = xMinInt-xMin[windowIdx]*scale+1;
+        const int xMinInt = (int)ceil(upscaleMin(xMin[windowIdx])-1);
+        const float xMinFrac = xMinInt-upscaleMin(xMin[windowIdx])+1;
 
-        const int yMinInt = (int)ceil(yMin[windowIdx]*scale-1);
-        // const float yMinFrac = yMinInt-yMin[windowIdx]*scale+1;
+        const int yMinInt = (int)ceil(upscaleMin(yMin[windowIdx])-1);
+        // const float yMinFrac = yMinInt-upscaleMin(yMin[windowIdx])+1;
 
-        const int xMaxInt = (int)floor(xMax[windowIdx]*scale);
-        const float xMaxFrac = xMax[windowIdx]*scale-xMaxInt;
+        const int xMaxInt = (int)floor(upscaleMax(xMax[windowIdx]));
+        const float xMaxFrac = upscaleMax(xMax[windowIdx])-xMaxInt;
 
-        // const int yMaxInt = (int)floor(yMax[windowIdx]*scale);
-        // const float yMaxFrac = yMax[windowIdx]*scale-yMaxInt;
+        // const int yMaxInt = (int)floor(upscaleMax(yMax[windowIdx]));
+        // const float yMaxFrac = upscaleMax(yMax[windowIdx])-yMaxInt;
 
         const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
                              inData[
