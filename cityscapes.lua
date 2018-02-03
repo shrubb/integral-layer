@@ -36,27 +36,34 @@ cityscapes.classProbs = torch.FloatTensor {
 -- cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
 cityscapes.classWeights = cityscapes.classProbs:clone():add(1.10):log():pow(-1)
 
-function cityscapes.loadNames(kind) -- `kind` is 'train' or 'val'
-    --[[ returns:
+function cityscapes.loadNames(kind, disparityOriginal)
+    --[[
+        `kind`: 'train' or 'val'
+        `disparityOriginal`: if true, load original disparities, else those created manually from l+r shots
+
+        returns:
         {
-            {'train/aachen/aachen_000000_000019_leftImg8bit.png',
-             'train/aachen/aachen_000000_000019_gtFine_labelIds.png},
+            {image     =  'leftImg8bit/train/aachen/aachen_000000_000019_leftImg8bit.png',
+             labels    =       'gtFine/train/aachen/aachen_000000_000019_gtFine_labelIds.png',
+             disparity = 'disparityOur/train/aachen/aachen_000000_000019_disparity.png'},
             ...,
         }
     --]]
     
-    local retval = {}
-    local labelBase = cityscapes.relative .. 'gtFine/' .. kind .. '/'
+    local retval = {} 
     local imageBase = cityscapes.relative .. 'leftImg8bit/' .. kind .. '/'
     
     -- iterate over cities
     for city in paths.iterdirs(imageBase) do
         for file in paths.iterfiles(imageBase .. city) do
-            local gtFile = file:gsub('leftImg8bit', 'gtFine_labelIds')
+            local gtFile   = file:gsub('leftImg8bit', 'gtFine_labelIds')
+            local dispFile = file:gsub('leftImg8bit', 'disparity')
+            local dispFolder = disparityOriginal and 'disparityFixedOrig' or 'disparityOur'
             table.insert(retval, 
                 {
-                    image  = kind .. '/' .. city .. '/' .. file,
-                    labels = kind .. '/' .. city .. '/' .. gtFile
+                    image     = 'leftImg8bit/' .. kind .. '/' .. city .. '/' .. file,
+                    labels    = 'gtFine/'      .. kind .. '/' .. city .. '/' .. gtFile,
+                    disparity = dispFolder     .. kind .. '/' .. city .. '/' .. dispFile,
                 })
         end
     end
@@ -93,12 +100,15 @@ function cityscapes.calcStd(files, mean)
     return retval:div(#files):sqrt()
 end
 
+require 'nn'
+local maxPooler = nn.SpatialMaxPooling(2,2, 2,2)
+
 -- Time for loading 1 picture:
 -- OpenCV: 0.1926669716835 seconds
 -- Torch : 0.15436439037323 seconds
 function cityscapes.loadSample(files, option)
-    local imagePath  = cityscapes.relative .. 'leftImg8bit/' .. files.image
-    local labelsPath = cityscapes.relative .. 'gtFine/' .. files.labels
+    local imagePath  = cityscapes.relative .. files.image
+    local labelsPath = cityscapes.relative .. files.labels
 
     -- load image
     local img = cv.imread{imagePath, cv.IMREAD_COLOR}
@@ -146,7 +156,30 @@ function cityscapes.loadSample(files, option)
         end
     end
 
-    return img, labels
+    -- load disparity if required
+    local disparity
+    if option:find('loadDisparity') then
+        local disparityPath = cityscapes.relative .. files.disparity
+        -- 16-bit PNG, in float, divided by 65535
+        disparity = cv.imread{disparityPath, cv.IMREAD_ANYDEPTH}
+        -- for nn's max pooling
+        disparity = nn.utils.addSingletonDimension(disparity)
+        -- downsample
+        while disparity:size(3) / 2 >= cityscapes.dsize[1] do
+            disparity = maxPooler:forward(disparity)
+        end
+        -- remove singleton dimension
+        disparity = disparity:squeeze()
+        -- if size isn't a power of 2, do extra resize job
+        if disparity:size(2) ~= cityscapes.dsize[1] or
+           disparity:size(1) ~= cityscapes.dsize[2] then
+            disparity = cv.resize{disparity, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+        end
+        -- finally, get real disparity numbers, about 1 to 1000
+        disparity:mul(65535)
+    end
+
+    return img, labels, disparity
 end
 
 local labelToColor = {
@@ -178,8 +211,6 @@ for label, color in ipairs(labelToColor) do
     end
 end
 
-require 'nn'
-
 function cityscapes.renderLabels(labels, img, blendCoeff)
     
     local retval = torch.FloatTensor(3, cityscapes.dsize[2], cityscapes.dsize[1]):zero()
@@ -201,6 +232,10 @@ function cityscapes.renderLabels(labels, img, blendCoeff)
     end
     
     return retval
+end
+
+function cityscapes.renderDisparity(disp)
+    return image.y2jet(disp)
 end
 
 function cityscapes.calcClassProbs(trainFiles)
