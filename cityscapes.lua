@@ -58,7 +58,7 @@ function cityscapes.loadNames(kind, disparityOriginal)
         for file in paths.iterfiles(imageBase .. city) do
             local gtFile   = file:gsub('leftImg8bit', 'gtFine_labelIds')
             local dispFile = file:gsub('leftImg8bit', 'disparity')
-            local dispFolder = disparityOriginal and 'disparityFixedOrig' or 'disparityOur'
+            local dispFolder = disparityOriginal and 'disparityFixedOrig/' or 'disparityOur/'
             table.insert(retval, 
                 {
                     image     = 'leftImg8bit/' .. kind .. '/' .. city .. '/' .. file,
@@ -101,7 +101,7 @@ function cityscapes.calcStd(files, mean)
 end
 
 require 'nn'
-local maxPooler = nn.SpatialMaxPooling(2,2, 2,2)
+local maxPooler = nn.SpatialMaxPooling(2,2, 2,2):float()
 
 -- Time for loading 1 picture:
 -- OpenCV: 0.1926669716835 seconds
@@ -165,8 +165,10 @@ function cityscapes.loadSample(files, option)
         -- for nn's max pooling
         disparity = nn.utils.addSingletonDimension(disparity)
         -- downsample
+        local downSampleAmount = 1
         while disparity:size(3) / 2 >= cityscapes.dsize[1] do
-            disparity = maxPooler:forward(disparity)
+            disparity = maxPooler:forward(disparity):clone()
+            downSampleAmount = downSampleAmount * 2
         end
         -- remove singleton dimension
         disparity = disparity:squeeze()
@@ -174,9 +176,10 @@ function cityscapes.loadSample(files, option)
         if disparity:size(2) ~= cityscapes.dsize[1] or
            disparity:size(1) ~= cityscapes.dsize[2] then
             disparity = cv.resize{disparity, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+            downSampleAmount = downSampleAmount * (disparity:size(2) / cityscapes.dsize[1])
         end
         -- finally, get real disparity numbers, about 1 to 1000
-        disparity:mul(65535)
+        disparity:mul(65535 / downSampleAmount)
     end
 
     return img, labels, disparity

@@ -434,7 +434,7 @@ do
     end
 
     function updateOutputCPU(self, input)
-    	error('NYI')
+        error('NYI')
 
         self:_reparametrize(true)
 
@@ -623,12 +623,7 @@ do
     end
 
     function updateOutputGPU(self, input)
-    	assert(
-    		self.scaleModule.output:nDimension() == 2 and 
-    		self.scaleModule.output:size(1) == self.h and 
-    		self.scaleModule.output:size(2) == self.w)
-
-    	-- TODO: do self;_reparametrize(false) in case an error is thrown during updateOutput
+        -- TODO: do self;_reparametrize(false) in case an error is thrown during updateOutput
         self:_reparametrize(true)
 
         CUDA_lib_varscale.dirtyFixWindowsVarScale(
@@ -650,13 +645,24 @@ do
            hasBatchDim = false
         end
 
+        local hasDispBatchDim = true
+        if self.scaleModule.output:nDimension() == 2 then
+            hasDispBatchDim = false
+            self.scaleModule.output = nn.utils.addSingletonDimension(self.scaleModule.output)
+        end
+
+        assert(
+            self.scaleModule.output:nDimension() == 3 and 
+            self.scaleModule.output:size(2) == self.h and 
+            self.scaleModule.output:size(3) == self.w)
+
         local batchSize = input:size(1)
 
         assert(input:size(2) == self.nInputPlane)
         assert(input:size(3) == self.h and input:size(4) == self.w)
 
         -- for C function safety
-        assert(self.scaleModule.output:stride(1) == self.w)
+        assert(self.scaleModule.output:stride(2) == self.w)
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
@@ -691,7 +697,7 @@ do
                         torch.data(self.ones), self.ones:stride(1), 0,
                         self.strideH, self.strideW, torch.data(self.scaleModule.output))
                 else
-                	error('NYI')
+                    error('NYI')
                     if self.replicate then
                         forwardCFunction = CUDA_lib.forwardNoNormReplicateVarScaleCuda
                     else
@@ -749,9 +755,9 @@ do
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
                         torch.data(input), input:stride(3), input:stride(2),
-                        self.strideH, self.strideW, torch.data(self.scaleModule.output))
+                        self.strideH, self.strideW, torch.data(self.scaleModule.output[batchIdx]))
                 else
-                	error('NYI')
+                    error('NYI')
                     if self.replicate then
                         forwardCudaFunction = CUDA_lib.forwardNoNormReplicateVarScaleCuda
                     else
@@ -780,6 +786,7 @@ do
 
         if not hasBatchDim   and self.output:size(1) == 1 then self.output = self.output[1] end
         if not hasChannelDim and self.output:size(1) == 1 then self.output = self.output[1] end
+        if not hasDispBatchDim and self.scaleModule.output:size(1) == 1 then self.scaleModule.output = self.scaleModule.output[1] end
 
         self:_reparametrize(false)
 
@@ -811,6 +818,12 @@ do
             if input:nDimension() == 3 then
                input = nn.utils.addSingletonDimension(input)
                hasBatchDim = false
+            end
+
+            local hasDispBatchDim = true
+            if self.scaleModule.output:nDimension() == 2 then
+                hasDispBatchDim = false
+                self.scaleModule.output = nn.utils.addSingletonDimension(self.scaleModule.output)
             end
 
             local batchSize = input:size(1)
@@ -856,9 +869,9 @@ do
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                                 gradOutput:stride(4), gradOutput:stride(3),
                                 self.strideH, self.strideW,
-                                torch.data(self.scaleModule.output))
+                                torch.data(self.scaleModule.output[batchIdx]))
                         else
-                        	error('NYI')
+                            error('NYI')
 
                             if self.replicate then
                                 updateGradInputCFunction = CUDA_lib_varscale.updateGradInputVarScaleCuda
@@ -875,12 +888,12 @@ do
                                 torch.data(self.yMin[inPlaneIdx]),
                                 torch.data(self.yMax[inPlaneIdx]),
                                 self.strideH, self.strideW,
-                                torch.data(self.scaleModule.output))
+                                torch.data(self.scaleModule.output[batchIdx]))
                         end
                     end
                 end
             else -- CPU
-            	error('NYI')
+                error('NYI')
 
                 self.gradInput:zero()
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
@@ -957,6 +970,7 @@ do
 
             if not hasBatchDim   then self.gradInput = self.gradInput[1] end
             if not hasChannelDim then self.gradInput = self.gradInput[1] end
+            if not hasDispBatchDim and self.scaleModule.output:size(1) == 1 then self.scaleModule.output = self.scaleModule.output[1] end
 
             self:_reparametrize(false)
 
@@ -965,7 +979,7 @@ do
     end
 
     function accGradParametersCPU(self, input, gradOutput, scale)
-    	error('NYI')
+        error('NYI')
         scale = scale or 1
 
         self:_reparametrize(true)
@@ -1096,6 +1110,12 @@ do
            hasBatchDim = false
         end
 
+        local hasDispBatchDim = true
+        if self.scaleModule.output:nDimension() == 2 then
+            hasDispBatchDim = false
+            self.scaleModule.output = nn.utils.addSingletonDimension(self.scaleModule.output)
+        end
+
         local batchSize = input:size(1)
 
         -- integralCuda must already hold integrated `input`
@@ -1151,7 +1171,7 @@ do
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
                             torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
                             inData, inStrideRow, self.strideH, self.strideW,
-                            torch.data(self.scaleModule.output))
+                            torch.data(self.scaleModule.output[batchIdx]))
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
@@ -1182,7 +1202,7 @@ do
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
                             torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
                             self.strideH, self.strideW,
-                            torch.data(self.scaleModule.output))
+                            torch.data(self.scaleModule.output[batchIdx]))
 
                         torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
 
@@ -1194,6 +1214,8 @@ do
                 end
             end
         end
+
+        if not hasDispBatchDim and self.scaleModule.output:size(1) == 1 then self.scaleModule.output = self.scaleModule.output[1] end
 
         self:_reparametrize(false)
     end
