@@ -276,15 +276,22 @@ do
         local nWindows    = file:readObject()
         local h           = file:readObject()
         local w           = file:readObject()
-        
-        self:__init(nInputPlane, nWindows, h, w)
-        self.xMin = file:readObject()
-        self.xMax = file:readObject()
-        self.yMin = file:readObject()
-        self.yMax = file:readObject()
 
+        -- doing it non-straighforward way for compatibility with an earlier bug
+        local tmp = {}
+        for _,param in ipairs{'xMin','xMax','yMin','yMax'} do
+            tmp[param] = file:readObject()
+        end
+
+        local scaleModule = file:readObject()
+
+        self:__init(nInputPlane, nWindows, h, w, 1,1, scaleModule)
+        
+        for param,value in pairs(tmp) do
+            self[param] = value
+        end
+        
         self:type(self.xMin:type())
-        self.scaleModule = file:readObject()
     end
 
     -- reparametrization

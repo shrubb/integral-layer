@@ -52,6 +52,13 @@ function cityscapes.loadNames(kind, disparityOriginal)
     
     local retval = {} 
     local imageBase = cityscapes.relative .. 'leftImg8bit/' .. kind .. '/'
+
+    do
+        assert(cityscapes.relative:sub(-1, -1) == '/')
+        local cities = paths.dir(imageBase)
+        print('Loading images from ' .. imageBase .. '. Example cities: ' .. 
+            tostring(cities[1]) .. ', ' .. tostring(cities[2]))
+    end
     
     -- iterate over cities
     for city in paths.iterdirs(imageBase) do
@@ -238,7 +245,10 @@ function cityscapes.renderLabels(labels, img, blendCoeff)
 end
 
 function cityscapes.renderDisparity(disp)
-    return image.y2jet(disp)
+    local dispClone = disp:clone()
+    dispClone:add(-dispClone:min())
+    dispClone:mul(254/disp:max()):add(1)
+    return image.y2jet(dispClone)
 end
 
 function cityscapes.calcClassProbs(trainFiles)
