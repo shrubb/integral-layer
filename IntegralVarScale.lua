@@ -259,36 +259,27 @@ do
 
     -- overload
     function IntegralVarScale:write(file)
-        file:writeObject(self.nInputPlane)
-        file:writeObject(self.nWindows)
-        file:writeObject(self.h)
-        file:writeObject(self.w)
-        file:writeObject(self.xMin)
-        file:writeObject(self.xMax)
-        file:writeObject(self.yMin)
-        file:writeObject(self.yMax)
-        file:writeObject(self.scaleModule)
+        for _, param in ipairs{
+            'nInputPlane', 'nWindows', 'h', 'w', 'strideH', 'strideW', 'scaleModule',
+            'xMin', 'xMax', 'yMin', 'yMax',
+            'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'} do
+
+            file:writeObject(self[param])
+        end
     end
 
     -- overload
     function IntegralVarScale:read(file)
-        local nInputPlane = file:readObject()
-        local nWindows    = file:readObject()
-        local h           = file:readObject()
-        local w           = file:readObject()
+        -- 'nInputPlane', 'nWindows', 'h', 'w', 'strideH', 'strideW', 'scaleModule'
+        local initArgs = {}
+        for k = 1,7 do initArgs[k] = file:readObject() end
+        self:__init(table.unpack(initArgs))
 
-        -- doing it non-straighforward way for compatibility with an earlier bug
-        local tmp = {}
-        for _,param in ipairs{'xMin','xMax','yMin','yMax'} do
-            tmp[param] = file:readObject()
-        end
+        for _, param in ipairs{
+            'xMin', 'xMax', 'yMin', 'yMax',
+            'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'} do
 
-        local scaleModule = file:readObject()
-
-        self:__init(nInputPlane, nWindows, h, w, 1,1, scaleModule)
-        
-        for param,value in pairs(tmp) do
-            self[param] = value
+            self[param] = file:readObject()
         end
         
         self:type(self.xMin:type())
@@ -630,7 +621,7 @@ do
     end
 
     function updateOutputGPU(self, input)
-        -- TODO: do self;_reparametrize(false) in case an error is thrown during updateOutput
+        -- TODO: do self:_reparametrize(false) in case an error is thrown during updateOutput
         self:_reparametrize(true)
 
         CUDA_lib_varscale.dirtyFixWindowsVarScale(
@@ -665,6 +656,7 @@ do
 
         local batchSize = input:size(1)
 
+        assert(self.scaleModule.output:size(1) == batchSize)
         assert(input:size(2) == self.nInputPlane)
         assert(input:size(3) == self.h and input:size(4) == self.w)
 
@@ -702,7 +694,7 @@ do
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
                         torch.data(self.ones), self.ones:stride(1), 0,
-                        self.strideH, self.strideW, torch.data(self.scaleModule.output))
+                        self.strideH, self.strideW, torch.data(self.scaleModule.output[batchIdx]))
                 else
                     error('NYI')
                     if self.replicate then
@@ -761,7 +753,7 @@ do
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input), input:stride(3), input:stride(2),
+                        torch.data(input[batchIdx]), input:stride(3), input:stride(2),
                         self.strideH, self.strideW, torch.data(self.scaleModule.output[batchIdx]))
                 else
                     error('NYI')
@@ -1128,7 +1120,6 @@ do
         -- integralCuda must already hold integrated `input`
         assert(self.integralCuda:stride(2) == self.w+1)
 
-        self.tmpArrayGPU   :resize(4, self.nWindows, self.hOut * self.wOut)
         self.tmpArraySumGPU:resize(4, self.nWindows)
 
         for k = 1,(self.normalize and 2 or 1) do
@@ -1141,6 +1132,15 @@ do
             local intStrideChannel = k == 1 and self.integralCuda:stride(1) or 0
 
             for batchIdx = 1,batchSize do
+                self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
+
+                CUDA_lib.integralImageCuda(
+                    torch.data(input[batchIdx]), torch.data(self.integralCuda),
+                    self.nInputPlane, self.h, self.w,
+                    torch.data(self.tmpArrayGPU))
+
+                self.tmpArrayGPU:resize(4, self.nWindows, self.hOut * self.wOut)
+
                 local accGradParametersCFunction
 
                 if self.exact then

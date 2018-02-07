@@ -19,6 +19,7 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
+batchSize = 1
 strideH, strideW = 1, 1
 h,w = math.random(1+strideH, 200), math.random(1+strideW, 200)
 print('h, w = ' .. h .. ', ' .. w)
@@ -54,15 +55,15 @@ elseif testType == 'border' then
         targetY = math.random(2, w-1)
     end
 end
-targetPlane = math.random(1, int.nInputPlane)
+targetBatchIdx, targetPlane = math.random(1, batchSize), math.random(1, int.nInputPlane)
 
-print('targetX, targetY, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .. targetPlane)
+print('targetX, targetY, targetBatchIdx, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .. targetBatchIdx .. ',' .. targetPlane)
 
 crit = nn.MSECriterion():type(dtype)
 
-img = torch.rand(int.nInputPlane, h, w):type(dtype)
-scales = torch.rand(h, w):mul(2):add(0.1):type(dtype)
-target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):add(-0.5):mul(0.1):type(dtype)
+img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
+scales = torch.rand(batchSize, h, w):mul(2):add(1):type(dtype)
+target = torch.rand(batchSize, int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):add(-0.5):mul(0.1):type(dtype)
 
 scaleProcessor:forward(scales)
 
@@ -124,7 +125,7 @@ local step = 0.1
 local innerStep = int.exact and 0.015 or 1
 
 for param = -5,5,step do
-    img[{targetPlane, targetX, targetY}] = param
+    img[{targetBatchIdx, targetPlane, targetX, targetY}] = param
     pred = int:forward(img)
 
     params[k] = param
@@ -132,11 +133,11 @@ for param = -5,5,step do
 
     int:zeroGradParameters()
     int:updateGradInput(img, crit:updateGradInput(pred, target))
-    derivM[k] = int.gradInput[{targetPlane, targetX, targetY}]
+    derivM[k] = int.gradInput[{targetBatchIdx, targetPlane, targetX, targetY}]
     
-    img[{targetPlane, targetX, targetY}] = param + innerStep
+    img[{targetBatchIdx, targetPlane, targetX, targetY}] = param + innerStep
     valFront = crit:forward(int:forward(img), target)
-    img[{targetPlane, targetX, targetY}] = param - innerStep
+    img[{targetBatchIdx, targetPlane, targetX, targetY}] = param - innerStep
     valBack = crit:forward(int:forward(img), target)
     
     deriv[k] = (valFront - valBack) / (2 * innerStep)

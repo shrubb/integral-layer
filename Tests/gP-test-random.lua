@@ -4,8 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1513711315
-print('Random seed is ' .. seed)
+seed = 1518018971
 torch.manualSeed(seed)
 math.randomseed(seed)
 
@@ -22,8 +21,9 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-h,w = math.random(2, 100), math.random(2, 100)
-strideH, strideW = 2,2
+batchSize = 2
+h,w = math.random(2, 4), math.random(2, 4)
+strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 
@@ -39,8 +39,9 @@ int.replicate = true
 int.normalize = false
 crit = nn.MSECriterion():type(dtype)
 
-img = torch.rand(int.nInputPlane, h, w):type(dtype)
-target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
+img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
+-- img[2]:copy(img[1])
+target = torch.rand(batchSize, int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
 
 local paramPlane, paramWin = math.random(1,int.nInputPlane), math.random(1,int.nWindows)
 print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)
@@ -98,8 +99,8 @@ deriv = {}
 derivM = {}
 
 local k = 1
-local step = 0.1
-local innerStep = int.exact and 0.015 or 1
+local step = 0.04
+local innerStep = int.exact and 0.005 or 1
 
 local lowerLimit, upperLimit
 
@@ -186,3 +187,5 @@ gnuplot.grid(true)
 --]]
 end -- if
 end -- for
+
+print('Random seed was ' .. seed)

@@ -732,7 +732,7 @@ do
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input), input:stride(3), input:stride(2),
+                        torch.data(input[batchIdx]), input:stride(3), input:stride(2),
                         self.strideH, self.strideW)
                 else
                     if self.replicate then
@@ -1074,10 +1074,10 @@ do
 
         local batchSize = input:size(1)
 
-        -- integralCuda must already hold integrated `input`
+        -- TODO: optionally, make `integralCuda` retain integrated `input` from `:forward()` pass
+        -- (will require more memory for training, but faster computation)
         assert(self.integralCuda:stride(2) == self.w+1)
 
-        self.tmpArrayGPU   :resize(4, self.nWindows, self.hOut * self.wOut)
         self.tmpArraySumGPU:resize(4, self.nWindows)
 
         for k = 1,(self.normalize and 2 or 1) do
@@ -1090,6 +1090,15 @@ do
             local intStrideChannel = k == 1 and self.integralCuda:stride(1) or 0
 
             for batchIdx = 1,batchSize do
+                self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
+
+                CUDA_lib.integralImageCuda(
+                    torch.data(input[batchIdx]), torch.data(self.integralCuda),
+                    self.nInputPlane, self.h, self.w,
+                    torch.data(self.tmpArrayGPU))
+
+                self.tmpArrayGPU:resize(4, self.nWindows, self.hOut * self.wOut)
+
                 local accGradParametersCFunction
 
                 if self.exact then

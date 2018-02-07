@@ -4,8 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralVarScale'
 
 local seed = os.time()
--- seed = 1513711315
-print('Random seed is ' .. seed)
+seed = 1518004884
 torch.manualSeed(seed)
 math.randomseed(seed)
 
@@ -22,7 +21,8 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-h,w = math.random(2, 20), math.random(2, 20)
+batchSize = 2
+h,w = math.random(2, 5), math.random(2, 5)
 strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
@@ -41,9 +41,10 @@ int.replicate = true
 int.normalize = true
 crit = nn.MSECriterion():type(dtype)
 
-img = torch.rand(int.nInputPlane, h, w):type(dtype)
-scales = torch.rand(h, w):mul(2):add(0.1):type(dtype)
-target = torch.rand(int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
+img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
+scales = torch.rand(batchSize, h, w):mul(3):add(1):type(dtype)
+target = torch.rand(batchSize, int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
+-- img[2]:copy(img[1])
 
 scaleProcessor:forward(scales)
 
@@ -103,8 +104,8 @@ deriv = {}
 derivM = {}
 
 local k = 1
-local step = 0.1
-local innerStep = int.exact and 0.015 or 1
+local step = 0.05
+local innerStep = int.exact and 0.001 or 1
 
 local lowerLimit, upperLimit
 
@@ -158,7 +159,8 @@ for param = lowerLimit,upperLimit,step do
         int:_reparametrize(true)
         int[targetParam][paramPlane][paramWin] = param + innerStep
         int:_reparametrize(false)
-        valFront = crit:forward(int:forward(img), target)
+        int:forward(img)
+        valFront = crit:forward(int.output, target)
         deriv[k] = (valFront - loss[k]) / innerStep * int.reparametrization
          
         k = k + 1
@@ -191,3 +193,5 @@ gnuplot.grid(true)
 --]]
 end -- if
 end -- for
+
+print('Random seed was ' .. seed)
