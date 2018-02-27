@@ -186,6 +186,9 @@ do
         -- if true, acts like BORDER_MODE_REPLICATE in OpenCV
         -- if false, treats those pixels as zeros (BORDER_MODE_CONSTANT with a value of 0)
         self.replicate = true
+        -- if true, compute integral images for each batch sample separately (less memory usage but faster)
+        -- if false, compute integral images for all batch samples at once AND reuse them in `accGradParameters`
+        self.saveMemoryIntegral = false
 
         -- has `self.cdiv:updateGradInput()` already been done for current input?
         self._backwardDone = false
@@ -701,21 +704,38 @@ do
             assert(self.outputNonNorm:stride(3) == self.wOut) -- for C function safety
             assert(self.outputNonNorm:stride(2) == self.wOut*self.hOut) -- for C function safety
 
-            self.integralCuda:resize(self.nInputPlane, self.h+1, self.w+1)
+            if self.saveMemoryIntegral then
+                -- compute integral images for each batch sample separately
+                self.integralCuda:resize(self.nInputPlane, self.h+1, self.w+1)
+            else
+                -- compute integral images for all batch samples at once
+                -- plus reuse them in `accGradParameters`
+                self.integralCuda:resize(batchSize, self.nInputPlane, self.h+1, self.w+1)
+            end
+            assert(self.integralCuda:isContiguous()) -- TODO: use actual strides
 
             if self.tmpArrayGPU:nElement() < self.integralCuda:nElement() then
                 self.tmpArrayGPU:resize(self.integralCuda:nElement())
             end
 
+            if not self.saveMemoryIntegral then
+                CUDA_lib.integralImageCuda(
+                    input:data(), self.integralCuda:data(),
+                    batchSize*self.nInputPlane, self.h, self.w,
+                    self.tmpArrayGPU:data())
+            end
+
             for batchIdx = 1,batchSize do
 
-                CUDA_lib.integralImageCuda(
-                    torch.data(input[batchIdx]), torch.data(self.integralCuda),
-                    self.nInputPlane, self.h, self.w,
-                    torch.data(self.tmpArrayGPU))
+                if self.saveMemoryIntegral then
+                    CUDA_lib.integralImageCuda(
+                        input[batchIdx]:data(), self.integralCuda:data(),
+                        self.nInputPlane, self.h, self.w,
+                        self.tmpArrayGPU:data())
+                end
 
-                local intData = torch.data(self.integralCuda)
-                local outData = torch.data(self.outputNonNorm[batchIdx])
+                local intData = self.integralCuda[self.saveMemoryIntegral and 1 or batchIdx]:data()
+                local outData = self.outputNonNorm[batchIdx]:data()
             
                 local forwardCudaFunction
 
@@ -728,7 +748,7 @@ do
                     end
 
                     forwardCudaFunction(
-                        intData, self.integralCuda:stride(1), outData,
+                        intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
@@ -743,7 +763,7 @@ do
                     end
 
                     forwardCudaFunction(
-                        intData, self.integralCuda:stride(1), outData,
+                        intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
@@ -1074,9 +1094,12 @@ do
 
         local batchSize = input:size(1)
 
-        -- TODO: optionally, make `integralCuda` retain integrated `input` from `:forward()` pass
-        -- (will require more memory for training, but faster computation)
-        assert(self.integralCuda:stride(2) == self.w+1)
+        if self.saveMemoryIntegral then
+            assert(self.integralCuda:stride(2) == self.w+1)
+        else
+            assert(self.integralCuda:size(1) == batchSize)
+            assert(self.integralCuda:stride(3) == self.w+1)
+        end
 
         self.tmpArraySumGPU:resize(4, self.nWindows)
 
@@ -1092,10 +1115,12 @@ do
             for batchIdx = 1,batchSize do
                 self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
 
-                CUDA_lib.integralImageCuda(
-                    torch.data(input[batchIdx]), torch.data(self.integralCuda),
-                    self.nInputPlane, self.h, self.w,
-                    torch.data(self.tmpArrayGPU))
+                if self.saveMemoryIntegral and k == 1 then
+                    CUDA_lib.integralImageCuda(
+                        input[batchIdx]:data(), self.integralCuda:data(),
+                        self.nInputPlane, self.h, self.w,
+                        self.tmpArrayGPU:data())
+                end
 
                 self.tmpArrayGPU:resize(4, self.nWindows, self.hOut * self.wOut)
 
@@ -1109,8 +1134,9 @@ do
                     end
 
                     for inPlaneIdx = 1,self.nInputPlane do
-                        local intData = torch.data(
-                            k == 1 and self.integralCuda[inPlaneIdx] or self.onesIntegral)
+                        local intData = k == 1 and 
+                            self.integralCuda[self.saveMemoryIntegral and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                            self.onesIntegral:data()
 
                         local inData, inStrideRow, inStrideChannel
                         if k == 1 then
@@ -1152,8 +1178,9 @@ do
                     end
 
                     for inPlaneIdx = 1,self.nInputPlane do
-                        local intData = torch.data(
-                            k == 1 and self.integralCuda[inPlaneIdx] or self.onesIntegral)
+                        local intData = k == 1 and 
+                            self.integralCuda[self.saveMemoryIntegral and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                            self.onesIntegral:data()
 
                         self.tmpArrayGPU:copy(
                             gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]

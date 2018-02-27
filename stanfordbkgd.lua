@@ -86,7 +86,8 @@ local labelToColor = {
 
 require 'nn'
 
-function dataset.renderLabels(labels, img, blendCoeff)    
+function dataset.renderLabels(labels, img, blendCoeff)
+
     local retval = torch.FloatTensor(3, dataset.dsize[2], dataset.dsize[1]):zero()
     for label, color in ipairs(labelToColor) do
         local mask = nn.utils.addSingletonDimension(labels:eq(label))

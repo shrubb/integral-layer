@@ -4,11 +4,11 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
-seed = 1518018971
+-- seed = 1518018971
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local targetParam = 'yMax'
+local targetParam = 'xMin'
 print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
 
@@ -21,7 +21,7 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-batchSize = 2
+batchSize = 10
 h,w = math.random(2, 4), math.random(2, 4)
 strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
@@ -36,7 +36,8 @@ int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
+int.saveMemoryIntegral = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)

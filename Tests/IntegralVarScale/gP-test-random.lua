@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralVarScale'
 
 local seed = os.time()
-seed = 1518004884
+-- seed = 1518004884
 torch.manualSeed(seed)
 math.randomseed(seed)
 
@@ -21,8 +21,8 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-batchSize = 2
-h,w = math.random(2, 5), math.random(2, 5)
+batchSize = 1
+h,w = math.random(2, 40), math.random(2, 40)
 strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
@@ -34,6 +34,9 @@ end
 require 'nn'
 scaleProcessor = nn.Identity()
 int = IntegralVarScale(2, 2, h, w, strideH, strideW, scaleProcessor):type(dtype)
+
+scaleProcessor:training()
+int:training()
 
 int.exact = true
 int.smart = true

@@ -9,7 +9,7 @@ print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'inner' -- 'corner' | 'border' | 'inner'
+local testType = 'corner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -34,7 +34,8 @@ int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 int.exact = true
 int.smart = true
 int.replicate = true
-int.normalize = false
+int.normalize = true
+int.saveMemoryIntegral = false
 
 if testType == 'inner' then
     targetX = math.random(2, h-1)

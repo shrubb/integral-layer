@@ -109,4 +109,7 @@ model:add(SpatialFullConvolution(16, nClasses, 3,3, 2,2, 1,1, 1,1))
 model:add(nn.View(nClasses, w*h):setNumInputDims(3))
 model:add(nn.Transpose({2, 1}):setNumInputDims(2))
 
-return model
+local GSconfig = {
+}
+
+return model, GSconfig

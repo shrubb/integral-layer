@@ -31,7 +31,7 @@ local paramsCount = 0
 
 for iter = 1,2 do
     local intIdx = 1
-    local intNumRedundantPlanes = {17, 0, 0}
+    local intNumRedundantPlanes = {}
 
     convOps = 0
     integralOps = 0
