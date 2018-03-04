@@ -49,8 +49,8 @@ for iter = 1,2 do
         elseif kind:find('Convolution') then
             currentOps = 
                 module.kW * module.kH * module.output:nElement() *
-                (module.nInputPlane / (module.groups or 1)) +
-                module.output:nElement()
+                (kind:find('DepthWise') and 1 or (module.nInputPlane / (module.groups or 1))) +
+                (module.bias and module.output:nElement() or 0)
             
             if module.kW * module.kH == 1 and module.nInputPlane > 256 and
                 intNumRedundantPlanes[intIdx] then
