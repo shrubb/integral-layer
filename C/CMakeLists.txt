@@ -18,6 +18,9 @@ add_library(cityscapes-c SHARED "cityscapes-c.cpp")
 
 #### CUDA implementation ###
 
+find_package(Torch REQUIRED)
+include_directories(${Torch_INSTALL_INCLUDE})
+
 find_package(CUDA)
 
 if (CUDA_FOUND)
@@ -28,4 +31,6 @@ if (CUDA_FOUND)
     
     cuda_add_cublas_to_target(integral-cuda)
     cuda_add_cublas_to_target(integral-toborder-cuda)
+
+    target_link_libraries(integral-cuda TH)
 endif()

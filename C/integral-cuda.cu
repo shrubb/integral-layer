@@ -7,6 +7,8 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
+#include <THC/THC.h>
+
 #include "integral-strided-cuda.hpp"
 
 #define BLOCK_SIZE 32
@@ -17,17 +19,10 @@ using std::min;
 using std::floor;
 using std::ceil;
 
-cublasHandle_t cublasHandle;
 float *CUDA_ZERO_FLOAT, *CUDA_ONE_FLOAT; // for cublas in device pointer mode
 
 extern "C"
-void _initCublasHandle() {
-    if (cublasCreate(&cublasHandle) != CUBLAS_STATUS_SUCCESS) {
-        printf ("CUBLAS initialization failed\n");
-    }
-    cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
-    // TODO: at shutdown, `cublasDestroy(handle);`
-
+void _initCublas() {
     // TODO: deallocate this!
     float zeroOne[] = {0, 1};
     cudaMalloc((void**)&CUDA_ZERO_FLOAT, sizeof(zeroOne));
@@ -92,16 +87,23 @@ __global__ void accumulateColsInplaceTransposedKernel(
     float *input, int channels, int h, int w);
 
 extern "C"
-void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp) {
+void integralImageCuda(THCState *state,
+    float *input, float *output, int channels, int h, int w, float *tmp) {
+
     int blockSize1D, gridSize1D;
+
+    cublasSetPointerMode(THCState_getCurrentBlasHandle(state), CUBLAS_POINTER_MODE_DEVICE);
+    cublasSetStream(THCState_getCurrentBlasHandle(state), THCState_getCurrentStream(state));
 
     int totalCols = channels * w;
     blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
     gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
-    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
+    accumulateColsKernel <<<gridSize1D, blockSize1D, 0, THCState_getCurrentStream(state)>>> 
+        (input, output, channels, h, w);
 
     cublasSgeam(
-        cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
+        THCState_getCurrentBlasHandle(state),
+        CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
         CUDA_ONE_FLOAT, output, w+1,
         CUDA_ZERO_FLOAT, tmp, channels * (h+1),
         tmp, channels * (h+1));
@@ -109,13 +111,18 @@ void integralImageCuda(float *input, float *output, int channels, int h, int w, 
     int totalRows = channels * h;
     blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
     gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
-    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (tmp, channels, h, w);
+    accumulateColsInplaceTransposedKernel
+        <<<gridSize1D, blockSize1D, 0, THCState_getCurrentStream(state)>>> (tmp, channels, h, w);
 
     cublasSgeam(
-        cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
+        THCState_getCurrentBlasHandle(state),
+        CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
         CUDA_ONE_FLOAT, tmp, channels * (h+1),
         CUDA_ZERO_FLOAT, output, w+1,
         output, w+1);
+
+    // back to Torch mode
+    cublasSetPointerMode(THCState_getCurrentBlasHandle(state), CUBLAS_POINTER_MODE_HOST);
 }
 
 /*
@@ -431,17 +438,18 @@ __global__ void forwardNoNormReplicateFracKernel(
 
 extern "C" {
 
-void forwardCuda(
+void forwardCuda(THCState *state,
     float *intData, int h, int w, int nWindows, float *outData,
     float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
 
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
     dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y, (nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
+    forwardKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> 
+        (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
 }
 
-void forwardNoNormReplicateCuda(
+void forwardNoNormReplicateCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -463,13 +471,13 @@ void forwardNoNormReplicateCuda(
         (w + dimBlock.y - 1) / dimBlock.y, 
         (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
 
-    forwardNoNormReplicateKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
-void forwardNoNormReplicateFracCuda(
+void forwardNoNormReplicateFracCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -489,7 +497,7 @@ void forwardNoNormReplicateFracCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
 
-    forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock>>> (
+    forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
@@ -699,7 +707,7 @@ __global__ void updateGradInputFracKernel(
     }
 }
 
-void updateGradInputCuda(
+void updateGradInputCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -717,13 +725,13 @@ void updateGradInputCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
-void updateGradInputFracCuda(
+void updateGradInputFracCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -744,7 +752,7 @@ void updateGradInputFracCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputFracKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
@@ -1021,7 +1029,7 @@ __global__ void yMinDeltaIntegralFracKernel(
     }
 }
 
-void backwardFracCuda(
+void backwardFracCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -1039,19 +1047,19 @@ void backwardFracCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
         xMax, yMin, yMax, inData, inDataStrideRow);
 
-    xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
         xMin, yMin, yMax, inData, inDataStrideRow);
 
-    yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMax, inData, inDataStrideRow);
 
-    yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow);
 }
@@ -1212,7 +1220,7 @@ __global__ void yMinDeltaIntegralKernel(
     }
 }
 
-void backwardCuda(
+void backwardCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -1228,19 +1236,19 @@ void backwardCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w,
         nWindows, h, w, xMax, yMin, yMax);
 
-    xMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w,
         nWindows, h, w, xMin, yMin, yMax);
 
-    yMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMax);
 
-    yMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMin);
 }
@@ -1285,14 +1293,14 @@ __global__ void dirtyFixWindowsKernel(
     }
 }
 
-void dirtyFixWindows(
+void dirtyFixWindows(THCState *state,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int size, int h, int w, float minWidth) {
 
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((2*size + dimBlock.x - 1) / dimBlock.x);
 
-    dirtyFixWindowsKernel <<<dimGrid, dimBlock>>> (
+    dirtyFixWindowsKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         xMin, xMax, yMin, yMax, size, (float)h, (float)w, minWidth);
 }
 

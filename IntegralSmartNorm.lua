@@ -57,59 +57,61 @@ void backwardNoNormFrac(
 local C_lib = ffi.load('C/lib/libintegral-c.so')
 
 ffi.cdef [[
-void forwardNoNormReplicateCuda(
+void forwardNoNormReplicateCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW);
 
-void forwardNoNormReplicateFracCuda(
+void forwardNoNormReplicateFracCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
     const int strideH, const int strideW);
 
-void updateGradInputCuda(
+void updateGradInputCuda(struct THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void updateGradInputFracCuda(
+void updateGradInputFracCuda(struct THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
     int strideH, int strideW);
 
-void backwardCuda(
+void backwardCuda(struct THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void backwardFracCuda(
+void backwardFracCuda(struct THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow,
     int strideH, int strideW);
 
-void integralImageCuda(float *input, float *output, int channels, int h, int w, float *tmp);
-void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
+void integralImageCuda(struct THCState *state,
+    float *input, float *output, int channels, int h, int w, float *tmp);
 
-void dirtyFixWindows(
+// void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w);
+
+void dirtyFixWindows(struct THCState *state,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int size, int h, int w, float minWidth);
 
-void _initCublasHandle(); ]]
+void _initCublas(); ]]
 
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
     CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
-    CUDA_lib._initCublasHandle();
+    CUDA_lib._initCublas();
 end
 
 do
@@ -626,7 +628,7 @@ do
     function updateOutputGPU(self, input)
         self:_reparametrize(true)
 
-        CUDA_lib.dirtyFixWindows(
+        CUDA_lib.dirtyFixWindows(cutorch.getState(),
             torch.data(self.xMin), torch.data(self.xMax),
             torch.data(self.yMin), torch.data(self.yMax),
             self.xMin:nElement(), self.h, self.w, self.exact and 1 or 2)
@@ -673,7 +675,7 @@ do
                         forwardCFunction = C_lib.forwardNoNormFrac
                     end
 
-                    forwardCFunction(
+                    forwardCFunction(cutorch.getState(),
                         intData, 0, outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -688,7 +690,7 @@ do
                         forwardCFunction = C_lib.forwardNoNorm
                     end
 
-                    forwardCFunction(
+                    forwardCFunction(cutorch.getState(),
                         intData, 0, outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -719,7 +721,7 @@ do
             end
 
             if not self.saveMemoryIntegral then
-                CUDA_lib.integralImageCuda(
+                CUDA_lib.integralImageCuda(cutorch.getState(),
                     input:data(), self.integralCuda:data(),
                     batchSize*self.nInputPlane, self.h, self.w,
                     self.tmpArrayGPU:data())
@@ -728,7 +730,7 @@ do
             for batchIdx = 1,batchSize do
 
                 if self.saveMemoryIntegral then
-                    CUDA_lib.integralImageCuda(
+                    CUDA_lib.integralImageCuda(cutorch.getState(),
                         input[batchIdx]:data(), self.integralCuda:data(),
                         self.nInputPlane, self.h, self.w,
                         self.tmpArrayGPU:data())
@@ -747,7 +749,7 @@ do
                         forwardCudaFunction = CUDA_lib.forwardNoNormFracCuda
                     end
 
-                    forwardCudaFunction(
+                    forwardCudaFunction(cutorch.getState(),
                         intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -762,7 +764,7 @@ do
                         forwardCudaFunction = CUDA_lib.forwardNoNormCuda
                     end
 
-                    forwardCudaFunction(
+                    forwardCudaFunction(cutorch.getState(),
                         intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -832,7 +834,7 @@ do
                 for batchIdx = 1,batchSize do
                     for inPlaneIdx = 1,self.nInputPlane do
 
-                        CUDA_lib.integralImageCuda(
+                        CUDA_lib.integralImageCuda(cutorch.getState(),
                             torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                             torch.data(self.integralGradOutput),
                             self.nWindows, self.hOut, self.wOut,
@@ -848,7 +850,7 @@ do
                                 error('NYI')
                             end
 
-                            updateGradInputCFunction(
+                            updateGradInputCFunction(cutorch.getState(),
                                 torch.data(self.integralGradOutput),
                                 torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
                                 self.h, self.w, self.nWindows,
@@ -866,7 +868,7 @@ do
                                 error('NYI')
                             end
 
-                            updateGradInputCFunction(
+                            updateGradInputCFunction(cutorch.getState(),
                                 torch.data(self.integralGradOutput),
                                 torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
                                 self.h, self.w, self.nWindows,
@@ -1116,7 +1118,7 @@ do
                 self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
 
                 if self.saveMemoryIntegral and k == 1 then
-                    CUDA_lib.integralImageCuda(
+                    CUDA_lib.integralImageCuda(cutorch.getState(),
                         input[batchIdx]:data(), self.integralCuda:data(),
                         self.nInputPlane, self.h, self.w,
                         self.tmpArrayGPU:data())
@@ -1156,7 +1158,7 @@ do
                                 :expand(4, self.nWindows, self.hOut * self.wOut))
 
                         -- multiplies `self.tmpArrayGPU` by parameter deltas
-                        accGradParametersCFunction(
+                        accGradParametersCFunction(cutorch.getState(),
                             intData, torch.data(self.tmpArrayGPU),
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
@@ -1187,7 +1189,7 @@ do
                                 :expand(4, self.nWindows, self.hOut * self.wOut))
 
                         -- multiplies `self.tmpArrayGPU` by parameter deltas
-                        accGradParametersCFunction(
+                        accGradParametersCFunction(cutorch.getState(),
                             intData, torch.data(self.tmpArrayGPU),
                             self.nWindows, self.h, self.w,
                             torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
