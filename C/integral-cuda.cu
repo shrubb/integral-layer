@@ -91,8 +91,8 @@ void integralImageCuda(THCState *state,
     float *input, float *output, int channels, int h, int w, float *tmp) {
 
     int blockSize1D, gridSize1D;
+    float ONE = 1.0, ZERO = 0.0;
 
-    cublasSetPointerMode(THCState_getCurrentBlasHandle(state), CUBLAS_POINTER_MODE_DEVICE);
     cublasSetStream(THCState_getCurrentBlasHandle(state), THCState_getCurrentStream(state));
 
     int totalCols = channels * w;
@@ -100,29 +100,28 @@ void integralImageCuda(THCState *state,
     gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
     accumulateColsKernel <<<gridSize1D, blockSize1D, 0, THCState_getCurrentStream(state)>>> 
         (input, output, channels, h, w);
+    THCudaCheck(cudaGetLastError());
 
-    cublasSgeam(
+    THCublasCheck(cublasSgeam(
         THCState_getCurrentBlasHandle(state),
         CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
-        CUDA_ONE_FLOAT, output, w+1,
-        CUDA_ZERO_FLOAT, tmp, channels * (h+1),
-        tmp, channels * (h+1));
+        &ONE, output, w+1,
+        &ZERO, tmp, channels * (h+1),
+        tmp, channels * (h+1)));
 
     int totalRows = channels * h;
     blockSize1D = BLOCK_SIZE * BLOCK_SIZE;
     gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
     accumulateColsInplaceTransposedKernel
         <<<gridSize1D, blockSize1D, 0, THCState_getCurrentStream(state)>>> (tmp, channels, h, w);
+    THCudaCheck(cudaGetLastError());
 
-    cublasSgeam(
+    THCublasCheck(cublasSgeam(
         THCState_getCurrentBlasHandle(state),
         CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
-        CUDA_ONE_FLOAT, tmp, channels * (h+1),
-        CUDA_ZERO_FLOAT, output, w+1,
-        output, w+1);
-
-    // back to Torch mode
-    cublasSetPointerMode(THCState_getCurrentBlasHandle(state), CUBLAS_POINTER_MODE_HOST);
+        &ONE, tmp, channels * (h+1),
+        &ZERO, output, w+1,
+        output, w+1));
 }
 
 /*
@@ -447,6 +446,7 @@ void forwardCuda(THCState *state,
 
     forwardKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> 
         (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
+    THCudaCheck(cudaGetLastError());
 }
 
 void forwardNoNormReplicateCuda(THCState *state,
@@ -475,6 +475,7 @@ void forwardNoNormReplicateCuda(THCState *state,
         intData, intDataStrideChannel, outData,
         h, w, nInputPlane, nWindows,
         xMin, xMax, yMin, yMax);
+    THCudaCheck(cudaGetLastError());
 }
 
 void forwardNoNormReplicateFracCuda(THCState *state,
@@ -502,6 +503,7 @@ void forwardNoNormReplicateFracCuda(THCState *state,
         h, w, nInputPlane, nWindows, 
         xMin, xMax, yMin, yMax,
         inData, inDataStrideRow, inDataStrideChannel);
+    THCudaCheck(cudaGetLastError());
 }
 
 /************************ updateGradInput ************************/
@@ -729,6 +731,7 @@ void updateGradInputCuda(THCState *state,
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
+    THCudaCheck(cudaGetLastError());
 }
 
 void updateGradInputFracCuda(THCState *state,
@@ -757,6 +760,7 @@ void updateGradInputFracCuda(THCState *state,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
         gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+    THCudaCheck(cudaGetLastError());
 }
 
 /************************ accGradParameters ************************/
@@ -1062,6 +1066,7 @@ void backwardFracCuda(THCState *state,
     yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow);
+    THCudaCheck(cudaGetLastError());
 }
 
 __global__ void xMaxDeltaIntegralKernel(
@@ -1251,6 +1256,7 @@ void backwardCuda(THCState *state,
     yMinDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMin);
+    THCudaCheck(cudaGetLastError());
 }
 
 /************************ Other stuff ************************/
@@ -1302,6 +1308,7 @@ void dirtyFixWindows(THCState *state,
 
     dirtyFixWindowsKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         xMin, xMax, yMin, yMax, size, (float)h, (float)w, minWidth);
+    THCudaCheck(cudaGetLastError());
 }
 
 } // extern "C"
