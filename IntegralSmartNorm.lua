@@ -104,14 +104,12 @@ void integralImageCuda(struct THCState *state,
 void dirtyFixWindows(struct THCState *state,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int size, int h, int w, float minWidth);
-
-void _initCublas(); ]]
+]]
 
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
     CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
-    CUDA_lib._initCublas();
 end
 
 do
@@ -188,9 +186,12 @@ do
         -- if true, acts like BORDER_MODE_REPLICATE in OpenCV
         -- if false, treats those pixels as zeros (BORDER_MODE_CONSTANT with a value of 0)
         self.replicate = true
-        -- if true, compute integral images for each batch sample separately (less memory usage but faster)
-        -- if false, compute integral images for all batch samples at once AND reuse them in `accGradParameters`
-        self.saveMemoryIntegral = false
+        -- if true, compute integral images for each batch sample one by one (a bit less memory usage but slower)
+        -- if false, compute integral images in `:forward()` for all batch samples at once AND reuse them in `accGradParameters`
+        self.saveMemoryIntegralInput = false
+        -- if true, compute `batchSize*nInputPlane` integral images at `:updateGradInput()` one by one (slower)
+        -- if false, compute all integral images at `:updateGradInput()` at once
+        self.saveMemoryIntegralGradOutput = false
 
         -- has `self.cdiv:updateGradInput()` already been done for current input?
         self._backwardDone = false
@@ -706,7 +707,7 @@ do
             assert(self.outputNonNorm:stride(3) == self.wOut) -- for C function safety
             assert(self.outputNonNorm:stride(2) == self.wOut*self.hOut) -- for C function safety
 
-            if self.saveMemoryIntegral then
+            if self.saveMemoryIntegralInput then
                 -- compute integral images for each batch sample separately
                 self.integralCuda:resize(self.nInputPlane, self.h+1, self.w+1)
             else
@@ -720,7 +721,7 @@ do
                 self.tmpArrayGPU:resize(self.integralCuda:nElement())
             end
 
-            if not self.saveMemoryIntegral then
+            if not self.saveMemoryIntegralInput then
                 CUDA_lib.integralImageCuda(cutorch.getState(),
                     input:data(), self.integralCuda:data(),
                     batchSize*self.nInputPlane, self.h, self.w,
@@ -729,14 +730,14 @@ do
 
             for batchIdx = 1,batchSize do
 
-                if self.saveMemoryIntegral then
+                if self.saveMemoryIntegralInput then
                     CUDA_lib.integralImageCuda(cutorch.getState(),
                         input[batchIdx]:data(), self.integralCuda:data(),
                         self.nInputPlane, self.h, self.w,
                         self.tmpArrayGPU:data())
                 end
 
-                local intData = self.integralCuda[self.saveMemoryIntegral and 1 or batchIdx]:data()
+                local intData = self.integralCuda[self.saveMemoryIntegralInput and 1 or batchIdx]:data()
                 local outData = self.outputNonNorm[batchIdx]:data()
             
                 local forwardCudaFunction
@@ -750,7 +751,7 @@ do
                     end
 
                     forwardCudaFunction(cutorch.getState(),
-                        intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
+                        intData, self.integralCuda:stride(self.saveMemoryIntegralInput and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
@@ -765,7 +766,7 @@ do
                     end
 
                     forwardCudaFunction(cutorch.getState(),
-                        intData, self.integralCuda:stride(self.saveMemoryIntegral and 1 or 2), outData,
+                        intData, self.integralCuda:stride(self.saveMemoryIntegralInput and 1 or 2), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
@@ -825,20 +826,34 @@ do
                 gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
 
             if self._type == 'torch.CudaTensor' then -- GPU
-                self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
+                if self.saveMemoryIntegralGradOutput then
+                    self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
+                else
+                    self.integralGradOutput:resize(batchSize, self.nInputPlane, self.nWindows, self.hOut+1, self.wOut+1)
+                end
 
                 if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
                     self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
                 end
 
+                if not self.saveMemoryIntegralGradOutput then
+                    CUDA_lib.integralImageCuda(cutorch.getState(),
+                        torch.data(gradOutput),
+                        torch.data(self.integralGradOutput),
+                        batchSize*self.nInputPlane*self.nWindows, self.hOut, self.wOut,
+                        torch.data(self.tmpArrayGPU))
+                end
+
                 for batchIdx = 1,batchSize do
                     for inPlaneIdx = 1,self.nInputPlane do
 
-                        CUDA_lib.integralImageCuda(cutorch.getState(),
-                            torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                            torch.data(self.integralGradOutput),
-                            self.nWindows, self.hOut, self.wOut,
-                            torch.data(self.tmpArrayGPU))
+                        if self.saveMemoryIntegralGradOutput then
+                            CUDA_lib.integralImageCuda(cutorch.getState(),
+                                torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
+                                torch.data(self.integralGradOutput),
+                                self.nWindows, self.hOut, self.wOut,
+                                torch.data(self.tmpArrayGPU))
+                        end
 
                         -- compute the needed integral sums
                         local updateGradInputCFunction
@@ -851,7 +866,7 @@ do
                             end
 
                             updateGradInputCFunction(cutorch.getState(),
-                                torch.data(self.integralGradOutput),
+                                torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
                                 torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
                                 self.h, self.w, self.nWindows,
                                 torch.data(self.xMin[inPlaneIdx]),
@@ -869,7 +884,7 @@ do
                             end
 
                             updateGradInputCFunction(cutorch.getState(),
-                                torch.data(self.integralGradOutput),
+                                torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
                                 torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
                                 self.h, self.w, self.nWindows,
                                 torch.data(self.xMin[inPlaneIdx]),
@@ -1096,7 +1111,7 @@ do
 
         local batchSize = input:size(1)
 
-        if self.saveMemoryIntegral then
+        if self.saveMemoryIntegralInput then
             assert(self.integralCuda:stride(2) == self.w+1)
         else
             assert(self.integralCuda:size(1) == batchSize)
@@ -1117,7 +1132,7 @@ do
             for batchIdx = 1,batchSize do
                 self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
 
-                if self.saveMemoryIntegral and k == 1 then
+                if self.saveMemoryIntegralInput and k == 1 then
                     CUDA_lib.integralImageCuda(cutorch.getState(),
                         input[batchIdx]:data(), self.integralCuda:data(),
                         self.nInputPlane, self.h, self.w,
@@ -1137,7 +1152,7 @@ do
 
                     for inPlaneIdx = 1,self.nInputPlane do
                         local intData = k == 1 and 
-                            self.integralCuda[self.saveMemoryIntegral and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                            self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
                             self.onesIntegral:data()
 
                         local inData, inStrideRow, inStrideChannel
@@ -1181,7 +1196,7 @@ do
 
                     for inPlaneIdx = 1,self.nInputPlane do
                         local intData = k == 1 and 
-                            self.integralCuda[self.saveMemoryIntegral and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                            self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
                             self.onesIntegral:data()
 
                         self.tmpArrayGPU:copy(

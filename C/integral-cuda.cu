@@ -19,17 +19,6 @@ using std::min;
 using std::floor;
 using std::ceil;
 
-float *CUDA_ZERO_FLOAT, *CUDA_ONE_FLOAT; // for cublas in device pointer mode
-
-extern "C"
-void _initCublas() {
-    // TODO: deallocate this!
-    float zeroOne[] = {0, 1};
-    cudaMalloc((void**)&CUDA_ZERO_FLOAT, sizeof(zeroOne));
-    CUDA_ONE_FLOAT = CUDA_ZERO_FLOAT + 1;
-    cudaMemcpy(CUDA_ZERO_FLOAT, zeroOne, sizeof(zeroOne), cudaMemcpyHostToDevice);
-}
-
 // TODO remove this code
 #define CUDA_ERROR_CHECK
 
