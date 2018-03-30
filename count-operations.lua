@@ -43,7 +43,7 @@ for iter = 1,2 do
         if     torch.isTypeOf(module, nn.Container) or kind:find('View') or kind:find('Reshape') or
                kind:find('Identity') or kind:find('JoinTable') or kind:find('BatchNorm') or
                kind:find('Padding') or kind == 'nn.Narrow' or kind == 'nn.Transpose' or
-               kind:find('Dropout') then
+               kind:find('Dropout') or kind:find('Contiguous') or kind:find('LogSoftMax') then
             currentOps = 0
 
         elseif kind:find('Convolution') then

@@ -381,15 +381,22 @@ local function validAverage(t)
 end
 
 function cityscapes.calcIoU(confMatrix)
+	-- returns: mean IoU, pixel acc, IoU by class
     local IoUclass = torch.FloatTensor(cityscapes.nClasses)
+    local pixelAcc = 0
+
     for classIdx = 1,IoUclass:nElement() do
         local TP = confMatrix[{classIdx, classIdx}]
         local FN = confMatrix[{classIdx, {}}]:sum() - TP
         local FP = confMatrix[{{}, classIdx}]:sum() - TP
+        
         IoUclass[classIdx] = TP / (TP + FP + FN)
+        pixelAcc = pixelAcc + TP
     end
 
-    return validAverage(IoUclass), IoUclass
+    pixelAcc = pixelAcc / confMatrix:sum()
+
+    return validAverage(IoUclass), pixelAcc, IoUclass
 end
 
 return cityscapes
