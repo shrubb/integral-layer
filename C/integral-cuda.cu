@@ -497,7 +497,9 @@ void forwardNoNormReplicateFracCuda(THCState *state,
 
 /************************ updateGradInput ************************/
 
-__global__ void updateGradInputKernel(
+/************** Planewise *************/
+
+__global__ void updateGradInputPlanewiseKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -555,7 +557,7 @@ __global__ void updateGradInputKernel(
     }
 }
 
-__global__ void updateGradInputFracKernel(
+__global__ void updateGradInputPlanewiseFracKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -698,14 +700,14 @@ __global__ void updateGradInputFracKernel(
     }
 }
 
-void updateGradInputCuda(THCState *state,
+void updateGradInputPlanewiseCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputCuda(
+        strided::updateGradInputPlanewiseCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;
@@ -716,14 +718,14 @@ void updateGradInputCuda(THCState *state,
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
     THCudaCheck(cudaGetLastError());
 }
 
-void updateGradInputFracCuda(THCState *state,
+void updateGradInputPlanewiseFracCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -731,7 +733,7 @@ void updateGradInputFracCuda(THCState *state,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputFracCuda(
+        strided::updateGradInputPlanewiseFracCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax,
             gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
@@ -744,10 +746,278 @@ void updateGradInputFracCuda(THCState *state,
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
+        gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
+    THCudaCheck(cudaGetLastError());
+}
+
+/****************** Single-kernel updateGradInput (faster) **************/
+
+__global__ void updateGradInputKernel(
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows,
+    const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax) {
+
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w; id /= w;
+    const int x = id % h; id /= h;
+    const int globalWindowIdx = id % (nInputPlane * nWindows);
+
+    // `id` is now the current plane number
+    gradOutputIntData += id * (w+1) * (h+1);
+
+    if (id < batchSize * nInputPlane * nWindows) {
+
+        float outValue = 0;
+        int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
+
+        xMinCurr = (int)ceil(-xMax[globalWindowIdx]);
+        yMinCurr = (int)ceil(-yMax[globalWindowIdx]);
+
+        xMaxCurr = (int)floor(-xMin[globalWindowIdx]) + 1;
+        yMaxCurr = (int)floor(-yMin[globalWindowIdx]) + 1;
+
+        // The following code block implements these lines
+        // as if they were executed simultaneously (see `void updateGradInputFrac()`):
+        // xMinCurr = (x == 0   and xMaxCurr >= 0 ? 0    : xMinCurr);
+        // xMaxCurr = (x == h-1 and xMinCurr <= 0 ? h+66 : xMaxCurr);
+        // yMinCurr = (y == 0   and yMaxCurr >= 0 ? 0    : yMinCurr);
+        // yMaxCurr = (y == w-1 and yMinCurr <= 0 ? w+66 : yMaxCurr);
+
+        bool needToChangeMin, needToChangeMax;
+
+        needToChangeMin = x == 0   and xMaxCurr >= 0;
+        needToChangeMax = x == h-1 and xMinCurr <= 0;
+        if (needToChangeMin) xMinCurr = 0;
+        if (needToChangeMax) xMaxCurr = h+66;
+
+        needToChangeMin = y == 0   and yMaxCurr >= 0;
+        needToChangeMax = y == w-1 and yMinCurr <= 0;
+        if (needToChangeMin) yMinCurr = 0;
+        if (needToChangeMax) yMaxCurr = w+66;
+
+        const int t = max(0, min(x+xMinCurr, h) );
+        const int b = max(0, min(x+xMaxCurr, h) );
+        const int l = max(0, min(y+yMinCurr, w) );
+        const int r = max(0, min(y+yMaxCurr, w) );
+
+        outValue += gradOutputIntData[b*(w+1) + r];
+        outValue -= gradOutputIntData[t*(w+1) + r];
+        outValue -= gradOutputIntData[b*(w+1) + l];
+        outValue += gradOutputIntData[t*(w+1) + l];
+
+        *tmpArray = outValue;
+    }
+}
+
+__global__ void updateGradInputFracKernel(
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows,
+    const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const float *gradOutputData,
+    const int gradOutputStrideRow, const int gradOutputStrideChannel) {
+
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w; id /= w;
+    const int x = id % h; id /= h;
+    const int globalWindowIdx = id % (nInputPlane * nWindows);
+
+    // `id` is now the current plane number
+    gradOutputIntData += id * (w+1) * (h+1);
+    gradOutputData += id * gradOutputStrideChannel;
+
+    if (id < batchSize * nInputPlane * nWindows) {
+
+        double outValue = 0;
+        int xMinCurr, xMaxCurr, yMinCurr, yMaxCurr;
+
+        xMinCurr = (int)ceil(-xMax[globalWindowIdx]);
+        yMinCurr = (int)ceil(-yMax[globalWindowIdx]);
+        const float xMinCurrFrac = (float)xMinCurr + xMax[globalWindowIdx];
+        const float yMinCurrFrac = (float)yMinCurr + yMax[globalWindowIdx];
+
+        xMaxCurr = (int)floor(-xMin[globalWindowIdx]) + 1;
+        yMaxCurr = (int)floor(-yMin[globalWindowIdx]) + 1;
+        const float xMaxCurrFrac = -xMin[globalWindowIdx] + 1 - xMaxCurr;
+        const float yMaxCurrFrac = -yMin[globalWindowIdx] + 1 - yMaxCurr;
+
+        // The following code block implements these lines
+        // as if they were executed simultaneously (see `void updateGradInputFrac()`):
+        // xMinCurr = (x == 0   and xMaxCurr >= 0 ? 0    : xMinCurr);
+        // xMaxCurr = (x == h-1 and xMinCurr <= 0 ? h+66 : xMaxCurr);
+        // yMinCurr = (y == 0   and yMaxCurr >= 0 ? 0    : yMinCurr);
+        // yMaxCurr = (y == w-1 and yMinCurr <= 0 ? w+66 : yMaxCurr);
+
+        bool needToChangeMin, needToChangeMax;
+
+        needToChangeMin = x == 0   and xMaxCurr >= 0;
+        needToChangeMax = x == h-1 and xMinCurr <= 0;
+        if (needToChangeMin) xMinCurr = 0;
+        if (needToChangeMax) xMaxCurr = h+66;
+
+        needToChangeMin = y == 0   and yMaxCurr >= 0;
+        needToChangeMax = y == w-1 and yMinCurr <= 0;
+        if (needToChangeMin) yMinCurr = 0;
+        if (needToChangeMax) yMaxCurr = w+66;
+
+        const int t = max(0, min(x+xMinCurr, h) );
+        const int b = max(0, min(x+xMaxCurr, h) );
+        const int l = max(0, min(y+yMinCurr, w) );
+        const int r = max(0, min(y+yMaxCurr, w) );
+
+        const int tAdv = x+xMinCurr-1 <  h ? max(0, min(t-1, h)) : t;
+        const int bAdv = x+xMaxCurr   >= 0 ? max(0, min(b+1, h)) : b;
+        const int lAdv = y+yMinCurr-1 <  w ? max(0, min(l-1, w)) : l;
+        const int rAdv = y+yMaxCurr   >= 0 ? max(0, min(r+1, w)) : r;
+
+        outValue += gradOutputIntData[b*(w+1) + r];
+        outValue -= gradOutputIntData[t*(w+1) + r];
+        outValue -= gradOutputIntData[b*(w+1) + l];
+        outValue += gradOutputIntData[t*(w+1) + l];
+
+        // -- xMax border
+        outValue +=
+            ( gradOutputIntData[bAdv*(w+1) + r]
+            - gradOutputIntData[b   *(w+1) + r]
+            - gradOutputIntData[bAdv*(w+1) + l]
+            + gradOutputIntData[b   *(w+1) + l]
+            ) * xMaxCurrFrac;
+
+        // -- yMax border
+        outValue +=
+            ( gradOutputIntData[b*(w+1) + rAdv]
+            - gradOutputIntData[b*(w+1) + r   ]
+            - gradOutputIntData[t*(w+1) + rAdv]
+            + gradOutputIntData[t*(w+1) + r   ]
+            ) * yMaxCurrFrac;
+
+        // -- xMin border
+        outValue +=
+            ( gradOutputIntData[t   *(w+1) + r]
+            - gradOutputIntData[tAdv*(w+1) + r]
+            - gradOutputIntData[t   *(w+1) + l]
+            + gradOutputIntData[tAdv*(w+1) + l]
+            ) * xMinCurrFrac;
+
+        // -- yMin border
+        outValue +=
+            ( gradOutputIntData[b*(w+1) + l   ]
+            - gradOutputIntData[b*(w+1) + lAdv]
+            - gradOutputIntData[t*(w+1) + l   ]
+            + gradOutputIntData[t*(w+1) + lAdv]
+            ) * yMinCurrFrac;
+
+        // -- corner pixels
+        outValue += 
+            xMaxCurrFrac*yMaxCurrFrac * (
+               (x+xMaxCurr > h-1 or
+                y+yMaxCurr > w-1 or
+                x+xMaxCurr < 0   or
+                y+yMaxCurr < 0   or
+                b == bAdv or
+                r == rAdv) ? 0 : 
+                gradOutputData[b*gradOutputStrideRow + r]);
+
+        outValue +=
+            xMinCurrFrac*yMaxCurrFrac * (
+               (x+xMinCurr-1 > h-1 or
+                y+yMaxCurr   > w-1 or
+                x+xMinCurr-1 < 0   or
+                y+yMaxCurr   < 0   or
+                t == tAdv or
+                r == rAdv) ? 0 : 
+                gradOutputData[tAdv*gradOutputStrideRow + r]);
+
+        outValue +=
+            xMaxCurrFrac*yMinCurrFrac * (
+               (x+xMaxCurr   > h-1 or
+                y+yMinCurr-1 > w-1 or
+                x+xMaxCurr   < 0   or
+                y+yMinCurr-1 < 0   or
+                b == bAdv or
+                l == lAdv) ? 0 : 
+                gradOutputData[b*gradOutputStrideRow + lAdv]);
+
+        outValue +=
+            xMinCurrFrac*yMinCurrFrac * (
+               (x+xMinCurr-1 > h-1 or
+                y+yMinCurr-1 > w-1 or
+                x+xMinCurr-1 < 0   or
+                y+yMinCurr-1 < 0   or
+                t == tAdv or
+                l == lAdv) ? 0 : 
+                gradOutputData[tAdv*gradOutputStrideRow + lAdv]);
+
+        *tmpArray = outValue;
+    }
+}
+
+void updateGradInputCuda(THCState *state,
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const int strideH, const int strideW) {
+
+    if (strideH != 1 or strideW != 1) {
+        THError("NYI");
+        // strided::updateGradInputPlanewiseFracCuda(
+        //     gradOutputIntData, gradInputData, h, w, nWindows,
+        //     xMin, xMax, yMin, yMax,
+        //     gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
+        //     strideH, strideW);
+        return;
+    }
+
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+
+    updateGradInputKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        gradOutputIntData, tmpArray,
+        batchSize, nInputPlane, nWindows,
+        h, w, xMin, xMax, yMin, yMax);
+    THCudaCheck(cudaGetLastError());
+}
+
+void updateGradInputFracCuda(THCState *state,
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const float *gradOutputData,
+    const int gradOutputStrideRow, const int gradOutputStrideChannel,
+    const int strideH, const int strideW) {
+
+    if (strideH != 1 or strideW != 1) {
+        THError("NYI");
+        // strided::updateGradInputPlanewiseFracCuda(
+        //     gradOutputIntData, gradInputData, h, w, nWindows,
+        //     xMin, xMax, yMin, yMax,
+        //     gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
+        //     strideH, strideW);
+        return;
+    }
+
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+
+    updateGradInputFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        gradOutputIntData, tmpArray,
+        batchSize, nInputPlane, nWindows,
+        h, w, xMin, xMax, yMin, yMax,
         gradOutputData, gradOutputStrideRow, gradOutputStrideChannel);
     THCudaCheck(cudaGetLastError());
 }

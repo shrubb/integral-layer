@@ -346,7 +346,7 @@ void forwardNoNormReplicateFracCuda(
 
 /************************ updateGradInput ************************/
 
-__global__ void updateGradInputKernel(
+__global__ void updateGradInputPlanewiseKernel(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -409,7 +409,7 @@ __global__ void updateGradInputKernel(
     }
 }
 
-__global__ void updateGradInputFracKernel(
+__global__ void updateGradInputPlanewiseFracKernel(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -558,7 +558,7 @@ __global__ void updateGradInputFracKernel(
     }
 }
 
-void updateGradInputCuda(
+void updateGradInputPlanewiseCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -570,14 +570,14 @@ void updateGradInputCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputPlanewiseKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
         strideH, strideW);
 }
 
-void updateGradInputFracCuda(
+void updateGradInputPlanewiseFracCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float *xMin, const float *xMax, const float *yMin, float *yMax,
@@ -590,7 +590,7 @@ void updateGradInputFracCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputFracKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputPlanewiseFracKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,

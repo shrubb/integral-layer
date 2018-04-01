@@ -13,14 +13,14 @@ void forwardNoNormReplicateFracCuda(
     const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
     const int strideH, const int strideW);
 
-void updateGradInputCuda(
+void updateGradInputPlanewiseCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
     const float * const yMin, const float * const yMax,
     const int strideH, const int strideW);
 
-void updateGradInputFracCuda(
+void updateGradInputPlanewiseFracCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float *xMin, const float *xMax, const float *yMin, float *yMax,

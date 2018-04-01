@@ -70,18 +70,34 @@ void forwardNoNormReplicateFracCuda(struct THCState *state,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
     const int strideH, const int strideW);
 
-void updateGradInputCuda(struct THCState *state,
+void updateGradInputPlanewiseCuda(struct THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void updateGradInputFracCuda(struct THCState *state,
+void updateGradInputPlanewiseFracCuda(struct THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *gradOutputData, int gradOutputStrideRow, int gradOutputStrideChannel,
     int strideH, int strideW);
+
+void updateGradInputFracCuda(struct THCState *state,
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const float *gradOutputData,
+    const int gradOutputStrideRow, const int gradOutputStrideChannel,
+    const int strideH, const int strideW);
+
+void updateGradInputCuda(struct THCState *state,
+    const float *gradOutputIntData, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const int strideH, const int strideW);
 
 void backwardCuda(struct THCState *state,
     float *intData, float *tmpArray,
@@ -183,15 +199,19 @@ do
         -- if true, divides it by the "valid" area (= inside the image) under the box
         self.smart = true -- hard switch for now
         -- specifies how to treat pixels outside of the image
-        -- if true, acts like BORDER_MODE_REPLICATE in OpenCV
-        -- if false, treats those pixels as zeros (BORDER_MODE_CONSTANT with a value of 0)
+        -- if true, acts like `BORDER_MODE_REPLICATE` in OpenCV
+        -- if false, treats those pixels as zeros (`BORDER_MODE_CONSTANT` with a value of 0)
         self.replicate = true
         -- if true, compute integral images for each batch sample one by one (a bit less memory usage but slower)
         -- if false, compute integral images in `:forward()` for all batch samples at once AND reuse them in `accGradParameters`
         self.saveMemoryIntegralInput = false
         -- if true, compute `batchSize*nInputPlane` integral images at `:updateGradInput()` one by one (slower)
         -- if false, compute all integral images at `:updateGradInput()` at once
+        -- has no effect if `self.saveMemoryUpdateGradInput == true` (see below)
         self.saveMemoryIntegralGradOutput = false
+        -- if true, accumulate gradInput straight into `self.gradInput`, but use kernel launches for that
+        -- if false, use just two kernels, but increase extra memory usage to `self.output:nElement()` floats
+        self.saveMemoryUpdateGradInput = false
 
         -- has `self.cdiv:updateGradInput()` already been done for current input?
         self._backwardDone = false
@@ -392,7 +412,7 @@ do
     end
 
     local function dirtyFixWindows(self)
-        -- dirty fix 1: don't let windows go outside the image, otherwise gradParams will vanish
+        -- dirty fix 1: don't let windows go outside the image, otherwise gradients may vanish
         self.xMin:clamp(-self.h+1, self.h-1)
         self.xMax:clamp(-self.h+1, self.h-1)
         self.yMin:clamp(-self.w+1, self.w-1)
@@ -826,76 +846,131 @@ do
                 gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
 
             if self._type == 'torch.CudaTensor' then -- GPU
-                if self.saveMemoryIntegralGradOutput then
-                    self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
-                else
+
+                if self.saveMemoryUpdateGradInput then
+                    if self.saveMemoryIntegralGradOutput then
+                        self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
+                    else
+                        self.integralGradOutput:resize(batchSize, self.nInputPlane, self.nWindows, self.hOut+1, self.wOut+1)
+                    end
+
+                    if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
+                        self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
+                    end
+
+                    if not self.saveMemoryIntegralGradOutput then
+                        CUDA_lib.integralImageCuda(cutorch.getState(),
+                            torch.data(gradOutput),
+                            torch.data(self.integralGradOutput),
+                            batchSize*self.nInputPlane*self.nWindows, self.hOut, self.wOut,
+                            torch.data(self.tmpArrayGPU))
+                    end
+
+                    for batchIdx = 1,batchSize do
+                        for inPlaneIdx = 1,self.nInputPlane do
+
+                            if self.saveMemoryIntegralGradOutput then
+                                CUDA_lib.integralImageCuda(cutorch.getState(),
+                                    torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
+                                    torch.data(self.integralGradOutput),
+                                    self.nWindows, self.hOut, self.wOut,
+                                    torch.data(self.tmpArrayGPU))
+                            end
+
+                            -- compute the needed integral sums
+                            local updateGradInputCFunction
+
+                            if self.exact then
+                                if self.replicate then
+                                    updateGradInputCFunction = CUDA_lib.updateGradInputPlanewiseFracCuda
+                                else
+                                    error('NYI')
+                                end
+
+                                updateGradInputCFunction(cutorch.getState(),
+                                    torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
+                                    torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
+                                    self.h, self.w, self.nWindows,
+                                    torch.data(self.xMin[inPlaneIdx]),
+                                    torch.data(self.xMax[inPlaneIdx]),
+                                    torch.data(self.yMin[inPlaneIdx]),
+                                    torch.data(self.yMax[inPlaneIdx]),
+                                    torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
+                                    gradOutput:stride(4), gradOutput:stride(3),
+                                    self.strideH, self.strideW)
+                            else
+                                if self.replicate then
+                                    updateGradInputCFunction = CUDA_lib.updateGradInputPlanewiseCuda
+                                else
+                                    error('NYI')
+                                end
+
+                                updateGradInputCFunction(cutorch.getState(),
+                                    torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
+                                    torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
+                                    self.h, self.w, self.nWindows,
+                                    torch.data(self.xMin[inPlaneIdx]),
+                                    torch.data(self.xMax[inPlaneIdx]),
+                                    torch.data(self.yMin[inPlaneIdx]),
+                                    torch.data(self.yMax[inPlaneIdx]),
+                                    self.strideH, self.strideW)
+                            end
+                        end
+                    end
+                else -- if NOT self.saveMemoryUpdateGradInput:
+
                     self.integralGradOutput:resize(batchSize, self.nInputPlane, self.nWindows, self.hOut+1, self.wOut+1)
-                end
+                    
+                    if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
+                        self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
+                    end
 
-                if self.tmpArrayGPU:nElement() < self.integralGradOutput:nElement() then
-                    self.tmpArrayGPU:resize(self.integralGradOutput:nElement())
-                end
-
-                if not self.saveMemoryIntegralGradOutput then
                     CUDA_lib.integralImageCuda(cutorch.getState(),
                         torch.data(gradOutput),
                         torch.data(self.integralGradOutput),
                         batchSize*self.nInputPlane*self.nWindows, self.hOut, self.wOut,
                         torch.data(self.tmpArrayGPU))
-                end
 
-                for batchIdx = 1,batchSize do
-                    for inPlaneIdx = 1,self.nInputPlane do
+                    self.tmpArrayGPU:resize(batchSize, self.nInputPlane, self.nWindows, self.h, self.w)
+                    assert(self.xMin:stride(1) == self.xMin:size(2))
 
-                        if self.saveMemoryIntegralGradOutput then
-                            CUDA_lib.integralImageCuda(cutorch.getState(),
-                                torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                                torch.data(self.integralGradOutput),
-                                self.nWindows, self.hOut, self.wOut,
-                                torch.data(self.tmpArrayGPU))
-                        end
-
-                        -- compute the needed integral sums
-                        local updateGradInputCFunction
-
-                        if self.exact then
-                            if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputFracCuda
-                            else
-                                error('NYI')
-                            end
-
-                            updateGradInputCFunction(cutorch.getState(),
-                                torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
-                                torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
-                                self.h, self.w, self.nWindows,
-                                torch.data(self.xMin[inPlaneIdx]),
-                                torch.data(self.xMax[inPlaneIdx]),
-                                torch.data(self.yMin[inPlaneIdx]),
-                                torch.data(self.yMax[inPlaneIdx]),
-                                torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
-                                gradOutput:stride(4), gradOutput:stride(3),
-                                self.strideH, self.strideW)
+                    if self.exact then
+                        if self.replicate then
+                            updateGradInputCFunction = CUDA_lib.updateGradInputFracCuda
                         else
-                            if self.replicate then
-                                updateGradInputCFunction = CUDA_lib.updateGradInputCuda
-                            else
-                                error('NYI')
-                            end
-
-                            updateGradInputCFunction(cutorch.getState(),
-                                torch.data(self.integralGradOutput[self.saveMemoryIntegralGradOutput and 1 or {batchIdx, inPlaneIdx}]),
-                                torch.data(self.gradInput[{batchIdx, inPlaneIdx}]),
-                                self.h, self.w, self.nWindows,
-                                torch.data(self.xMin[inPlaneIdx]),
-                                torch.data(self.xMax[inPlaneIdx]),
-                                torch.data(self.yMin[inPlaneIdx]),
-                                torch.data(self.yMax[inPlaneIdx]),
-                                self.strideH, self.strideW)
+                            error('NYI')
                         end
+
+                        updateGradInputCFunction(cutorch.getState(),
+                            torch.data(self.integralGradOutput),
+                            torch.data(self.tmpArrayGPU),
+                            batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                            torch.data(self.xMin), torch.data(self.xMax),
+                            torch.data(self.yMin), torch.data(self.yMax),
+                            torch.data(gradOutput),
+                            gradOutput:stride(4), gradOutput:stride(3),
+                            self.strideH, self.strideW)
+                    else
+                        if self.replicate then
+                            updateGradInputCFunction = CUDA_lib.updateGradInputCuda
+                        else
+                            error('NYI')
+                        end
+
+                        updateGradInputCFunction(cutorch.getState(),
+                            torch.data(self.integralGradOutput),
+                            torch.data(self.tmpArrayGPU),
+                            batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                            torch.data(self.xMin), torch.data(self.xMax),
+                            torch.data(self.yMin), torch.data(self.yMax),
+                            self.strideH, self.strideW)
                     end
+
+                    torch.sum(self.gradInput, self.tmpArrayGPU, 3)
+                    self.gradInput = self.gradInput[{{}, {}, 1, {}, {}}]
                 end
             else -- CPU
+
                 self.gradInput:zero()
                 self.integralGradOutput:resize(self.nWindows, self.hOut+1, self.wOut+1)
                 self.integralDouble:resize(1, self.hOut+1, self.wOut+1) -- temporary buffer for OpenCV
@@ -950,6 +1025,7 @@ do
                                 torch.data(gradOutput[{batchIdx, inPlaneIdx}]),
                                 gradOutput:stride(4), self.strideH, self.strideW)
                         else
+                            error('NYI')
                             if self.replicate then
                                 updateGradInputCFunction = C_lib.updateGradInput
                             else

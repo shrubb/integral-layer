@@ -508,7 +508,7 @@ void forwardNoNormReplicateFracCuda(
 
 /************************ updateGradInput ************************/
 
-__global__ void updateGradInputKernel(
+__global__ void updateGradInputPlanewiseKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -566,7 +566,7 @@ __global__ void updateGradInputKernel(
     }
 }
 
-__global__ void updateGradInputFracKernel(
+__global__ void updateGradInputPlanewiseFracKernel(
     const float *gradOutputIntData, float *const gradInputData,
     const int h, const int w, const int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -729,14 +729,14 @@ __global__ void updateGradInputFracKernel(
     }
 }
 
-void updateGradInputCuda(
+void updateGradInputPlanewiseCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputCuda(
+        strided::updateGradInputPlanewiseCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;
@@ -747,13 +747,13 @@ void updateGradInputCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputPlanewiseKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
 }
 
-void updateGradInputFracCuda(
+void updateGradInputPlanewiseFracCuda(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -761,7 +761,7 @@ void updateGradInputFracCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputFracCuda(
+        strided::updateGradInputPlanewiseFracCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax,
             gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
@@ -774,7 +774,7 @@ void updateGradInputFracCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputFracKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputPlanewiseFracKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
