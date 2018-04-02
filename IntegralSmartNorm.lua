@@ -99,18 +99,31 @@ void updateGradInputCuda(struct THCState *state,
     const float *const yMin, const float *const yMax,
     const int strideH, const int strideW);
 
-void backwardCuda(struct THCState *state,
+void backwardPlanewiseCuda(struct THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     int strideH, int strideW);
 
-void backwardFracCuda(struct THCState *state,
+void backwardPlanewiseFracCuda(struct THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow,
     int strideH, int strideW);
+
+void backwardFracCuda(struct THCState *state, const int paramId,
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, int inDataStrideRow, const int inDataStrideChannel,
+    const int strideH, const int strideW);
+
+void backwardCuda(struct THCState *state, const int paramId,
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const int strideH, const int strideW);
 
 void integralImageCuda(struct THCState *state,
     float *input, float *output, int channels, int h, int w, float *tmp);
@@ -212,6 +225,8 @@ do
         -- if true, accumulate gradInput straight into `self.gradInput`, but use kernel launches for that
         -- if false, use just two kernels, but increase extra memory usage to `self.output:nElement()` floats
         self.saveMemoryUpdateGradInput = false
+        -- totally same as above but for `accGradParameters`. If the above is true, does not really use more memory
+        self.saveMemoryAccGradParameters = false
 
         -- has `self.cdiv:updateGradInput()` already been done for current input?
         self._backwardDone = false
@@ -1218,8 +1233,6 @@ do
             assert(self.integralCuda:stride(3) == self.w+1)
         end
 
-        self.tmpArraySumGPU:resize(4, self.nWindows)
-
         for k = 1,(self.normalize and 2 or 1) do
             -- iteration 1: gradient by outputNonNorm
             -- iteration 2: gradient by outputOnes
@@ -1227,19 +1240,108 @@ do
             gradOutput = 
                 gradOutput:view(batchSize, self.nInputPlane, self.nWindows, self.hOut * self.wOut)
 
-            local intStrideChannel = k == 1 and self.integralCuda:stride(1) or 0
+            if self.saveMemoryAccGradParameters then
+                -- significantly slower (many kernel launches) but sometimes lower memory usage
+                -- not recommended to use
+                self.tmpArraySumGPU:resize(4, self.nWindows)
 
-            for batchIdx = 1,batchSize do
-                self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
+                for batchIdx = 1,batchSize do
+                    self.tmpArrayGPU:resize(self.nInputPlane, self.h+1, self.w+1)
 
-                if self.saveMemoryIntegralInput and k == 1 then
-                    CUDA_lib.integralImageCuda(cutorch.getState(),
-                        input[batchIdx]:data(), self.integralCuda:data(),
-                        self.nInputPlane, self.h, self.w,
-                        self.tmpArrayGPU:data())
+                    if self.saveMemoryIntegralInput and k == 1 then
+                        CUDA_lib.integralImageCuda(cutorch.getState(),
+                            input[batchIdx]:data(), self.integralCuda:data(),
+                            self.nInputPlane, self.h, self.w,
+                            self.tmpArrayGPU:data())
+                    end
+
+                    self.tmpArrayGPU:resize(4, self.nWindows, self.hOut * self.wOut)
+
+                    local accGradParametersCFunction
+
+                    if self.exact then
+                        if self.replicate then
+                            accGradParametersCFunction = CUDA_lib.backwardPlanewiseFracCuda
+                        else
+                            error('NYI')
+                        end
+
+                        for inPlaneIdx = 1,self.nInputPlane do
+                            local intData = k == 1 and 
+                                self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                                self.onesIntegral:data()
+
+                            local inData, inStrideRow, inStrideChannel
+                            if k == 1 then
+                                inData = torch.data(input[{batchIdx, inPlaneIdx}])
+                                inStrideRow = input:stride(input:nDimension()-1)
+                                -- not using it to save memory
+                                inStrideChannel = input:stride(input:nDimension()-2)
+                            else -- k == 2
+                                -- TODO write a separate faster kernel for k == 1
+                                inData = torch.data(self.ones)
+                                inStrideRow = self.ones:stride(1)
+                                inStrideChannel = 0
+                            end
+
+                            self.tmpArrayGPU:copy(
+                                gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
+                                    :expand(4, self.nWindows, self.hOut * self.wOut))
+
+                            -- multiplies `self.tmpArrayGPU` by parameter deltas
+                            accGradParametersCFunction(cutorch.getState(),
+                                intData, torch.data(self.tmpArrayGPU),
+                                self.nWindows, self.h, self.w,
+                                torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
+                                torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
+                                inData, inStrideRow, self.strideH, self.strideW) --, inStrideChannel)
+
+                            torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
+
+                            torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
+                            torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
+                            torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
+                            torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
+                        end
+                    else
+                        if self.replicate then
+                            accGradParametersCFunction = CUDA_lib.backwardPlanewiseCuda
+                        else
+                            error('NYI')
+                        end
+
+                        for inPlaneIdx = 1,self.nInputPlane do
+                            local intData = k == 1 and 
+                                self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
+                                self.onesIntegral:data()
+
+                            self.tmpArrayGPU:copy(
+                                gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
+                                    :expand(4, self.nWindows, self.hOut * self.wOut))
+
+                            -- multiplies `self.tmpArrayGPU` by parameter deltas
+                            accGradParametersCFunction(cutorch.getState(),
+                                intData, torch.data(self.tmpArrayGPU),
+                                self.nWindows, self.h, self.w,
+                                torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
+                                torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
+                                self.strideH, self.strideW)
+
+                            torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
+
+                            torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
+                            torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
+                            torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
+                            torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
+                        end
+                    end
                 end
-
-                self.tmpArrayGPU:resize(4, self.nWindows, self.hOut * self.wOut)
+            else -- if NOT self.saveMemoryAccGradParameters
+                -- faster implementation
+                self.tmpArrayGPU:resize(batchSize, self.nInputPlane, self.nWindows, self.hOut * self.wOut)
+                assert(self.tmpArrayGPU:isContiguous())
+                -- first `batchSize` channels will hold intermediate sums, then we will sum THEM in the last channel
+                self.tmpArraySumGPU:resize(batchSize+1, self.nInputPlane, self.nWindows)
 
                 local accGradParametersCFunction
 
@@ -1249,78 +1351,67 @@ do
                     else
                         error('NYI')
                     end
-
-                    for inPlaneIdx = 1,self.nInputPlane do
-                        local intData = k == 1 and 
-                            self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
-                            self.onesIntegral:data()
-
-                        local inData, inStrideRow, inStrideChannel
-                        if k == 1 then
-                            inData = torch.data(input[{batchIdx, inPlaneIdx}])
-                            inStrideRow = input:stride(input:nDimension()-1)
-                            -- not using it to save memory
-                            inStrideChannel = input:stride(input:nDimension()-2)
-                        else -- k == 2
-                            -- TODO write a separate faster kernel for k == 1
-                            inData = torch.data(self.ones)
-                            inStrideRow = self.ones:stride(1)
-                            inStrideChannel = 0
-                        end
-
-                        self.tmpArrayGPU:copy(
-                            gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
-                                :expand(4, self.nWindows, self.hOut * self.wOut))
-
-                        -- multiplies `self.tmpArrayGPU` by parameter deltas
-                        accGradParametersCFunction(cutorch.getState(),
-                            intData, torch.data(self.tmpArrayGPU),
-                            self.nWindows, self.h, self.w,
-                            torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
-                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
-                            inData, inStrideRow, self.strideH, self.strideW) --, inStrideChannel)
-
-                        torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
-
-                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
-                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
-                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
-                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
-                    end
                 else
                     if self.replicate then
                         accGradParametersCFunction = CUDA_lib.backwardCuda
                     else
                         error('NYI')
                     end
+                end
 
-                    for inPlaneIdx = 1,self.nInputPlane do
-                        local intData = k == 1 and 
-                            self.integralCuda[self.saveMemoryIntegralInput and inPlaneIdx or {batchIdx,inPlaneIdx}]:data() or
-                            self.onesIntegral:data()
+                local intData, intDataStrideChannel
+                local inData, inStrideRow, inStrideChannel
+                if k == 1 then
+                    intData = self.integralCuda:data()
+                    intDataStrideChannel = self.integralCuda:stride(2)
 
-                        self.tmpArrayGPU:copy(
-                            gradOutput[{batchIdx, {inPlaneIdx, inPlaneIdx}}]
-                                :expand(4, self.nWindows, self.hOut * self.wOut))
+                    inData = input:data()
+                    inStrideRow = input:stride(input:nDimension()-1)
+                    -- not using it to save memory
+                    inStrideChannel = input:stride(input:nDimension()-2)
+                else -- k == 2
+                    intData = self.onesIntegral:data()
+                    intDataStrideChannel = 0
 
-                        -- multiplies `self.tmpArrayGPU` by parameter deltas
-                        accGradParametersCFunction(cutorch.getState(),
-                            intData, torch.data(self.tmpArrayGPU),
-                            self.nWindows, self.h, self.w,
-                            torch.data(self.xMin[inPlaneIdx]), torch.data(self.xMax[inPlaneIdx]),
-                            torch.data(self.yMin[inPlaneIdx]), torch.data(self.yMax[inPlaneIdx]),
+                    -- TODO write a separate faster kernel for k == 1
+                    inData = torch.data(self.ones)
+                    inStrideRow = self.ones:stride(1)
+                    inStrideChannel = 0
+                end
+
+                local tmpArraySpatialSum = self.tmpArraySumGPU[{{1, batchSize}}]
+                local tmpArrayFinalSum = self.tmpArraySumGPU[{{batchSize+1, batchSize+1}}]
+
+                local gradParams = {self.gradXMin, self.gradXMax, self.gradYMin, self.gradYMax}
+
+                for paramId, gradParam in ipairs(gradParams) do
+                    self.tmpArrayGPU:copy(gradOutput)
+
+                    -- multiply `self.tmpArrayGPU` by parameter deltas
+                    if self.exact then
+                        accGradParametersCFunction(cutorch.getState(), paramId-1,
+                            intData, intDataStrideChannel, self.tmpArrayGPU:data(),
+                            batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                            self.xMin:data(), self.xMax:data(),
+                            self.yMin:data(), self.yMax:data(),
+                            inData, inStrideRow, inStrideChannel, self.strideH, self.strideW)
+                    else
+                        accGradParametersCFunction(cutorch.getState(), paramId-1,
+                            intData, intDataStrideChannel, self.tmpArrayGPU:data(),
+                            batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                            self.xMin:data(), self.xMax:data(),
+                            self.yMin:data(), self.yMax:data(),
                             self.strideH, self.strideW)
-
-                        torch.sum(self.tmpArraySumGPU, self.tmpArrayGPU, 3)
-
-                        torch.add(self.gradXMax[inPlaneIdx], self.gradXMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[1])
-                        torch.add(self.gradXMin[inPlaneIdx], self.gradXMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[2])
-                        torch.add(self.gradYMax[inPlaneIdx], self.gradYMax[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[3])
-                        torch.add(self.gradYMin[inPlaneIdx], self.gradYMin[inPlaneIdx], scale * self.reparametrization, self.tmpArraySumGPU[4])
                     end
+
+                    -- `self.tmpArrayGPU` is "batchSize x nInputPlane x nWindows x (h * w)"
+                    torch.sum(tmpArraySpatialSum, self.tmpArrayGPU, 4) -- sum out both spatial dimensions
+                    torch.sum(tmpArrayFinalSum, tmpArraySpatialSum, 1) -- sum out the batch dimension
+
+                    torch.add(gradParam, gradParam, scale * self.reparametrization, tmpArrayFinalSum)
                 end
             end
-        end
+        end -- for k = 1,(self.normalize and 2 or 1) do
 
         self:_reparametrize(false)
     end

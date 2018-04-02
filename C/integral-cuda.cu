@@ -1021,9 +1021,9 @@ void updateGradInputFracCuda(THCState *state,
     THCudaCheck(cudaGetLastError());
 }
 
-/************************ accGradParameters ************************/
+/************************ accGradParameters planewise ************************/
 
-__global__ void xMaxDeltaIntegralFracKernel(
+__global__ void xMaxDeltaIntegralPlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
@@ -1090,7 +1090,7 @@ __global__ void xMaxDeltaIntegralFracKernel(
     }
 }
 
-__global__ void xMinDeltaIntegralFracKernel(
+__global__ void xMinDeltaIntegralPlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
@@ -1157,7 +1157,7 @@ __global__ void xMinDeltaIntegralFracKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralFracKernel(
+__global__ void yMaxDeltaIntegralPlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
@@ -1224,7 +1224,7 @@ __global__ void yMaxDeltaIntegralFracKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralFracKernel(
+__global__ void yMinDeltaIntegralPlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
@@ -1291,7 +1291,7 @@ __global__ void yMinDeltaIntegralFracKernel(
     }
 }
 
-void backwardFracCuda(THCState *state,
+void backwardPlanewiseFracCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -1309,25 +1309,25 @@ void backwardFracCuda(THCState *state,
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMaxDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
         xMax, yMin, yMax, inData, inDataStrideRow);
 
-    xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMinDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
         xMin, yMin, yMax, inData, inDataStrideRow);
 
-    yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMaxDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMax, inData, inDataStrideRow);
 
-    yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMinDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow);
     THCudaCheck(cudaGetLastError());
 }
 
-__global__ void xMaxDeltaIntegralKernel(
+__global__ void xMaxDeltaIntegralPlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax) {
@@ -1366,7 +1366,7 @@ __global__ void xMaxDeltaIntegralKernel(
     }
 }
 
-__global__ void xMinDeltaIntegralKernel(
+__global__ void xMinDeltaIntegralPlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax) {
@@ -1405,7 +1405,7 @@ __global__ void xMinDeltaIntegralKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralKernel(
+__global__ void yMaxDeltaIntegralPlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax) {
@@ -1444,7 +1444,7 @@ __global__ void yMaxDeltaIntegralKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralKernel(
+__global__ void yMinDeltaIntegralPlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin) {
@@ -1483,7 +1483,7 @@ __global__ void yMinDeltaIntegralKernel(
     }
 }
 
-void backwardCuda(THCState *state,
+void backwardPlanewiseCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -1499,21 +1499,592 @@ void backwardCuda(THCState *state,
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMaxDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w,
         nWindows, h, w, xMax, yMin, yMax);
 
-    xMinDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMinDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w,
         nWindows, h, w, xMin, yMin, yMax);
 
-    yMaxDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMaxDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMax);
 
-    yMinDeltaIntegralKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMinDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMin);
+    THCudaCheck(cudaGetLastError());
+}
+
+/************************ accGradParameters fastest *********************/
+
+__global__ void xMaxDeltaIntegralFracKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+    inData   += id *  inDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        // const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        // const float xMinFrac = xMinInt-xMin[globalWindowIdx]+1;
+
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        const float yMinFrac = yMinInt-yMin[globalWindowIdx]+1;
+
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        // const float xMaxFrac = xMax[globalWindowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+        const float yMaxFrac = yMax[globalWindowIdx]-yMaxInt;
+
+        // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        // const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+        const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += brCorner * (y+yMaxInt <  1 ? 1.0f : yMaxFrac);
+        delta += blCorner * (y+yMinInt >= w ? 1.0f : yMinFrac);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1) 
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt  , h))*(w+1) 
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+        delta +=
+            intData[max(0,min(x+xMaxInt  , h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+
+        delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
+        *tmpArray *= delta;
+    }
+}
+
+__global__ void xMinDeltaIntegralFracKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *yMin, const float *yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+    inData   += id *  inDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        // const float xMinFrac = xMinInt-xMin[globalWindowIdx]+1;
+
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        const float yMinFrac = yMinInt-yMin[globalWindowIdx]+1;
+
+        // const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        // const float xMaxFrac = xMax[globalWindowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+        const float yMaxFrac = yMax[globalWindowIdx]-yMaxInt;
+
+        const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        // const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+        // const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += trCorner * (y+yMaxInt <  1 ? 1.0f : yMaxFrac);
+        delta += tlCorner * (y+yMinInt >= w ? 1.0f : yMinFrac);
+
+        delta += 
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+
+        delta *= (x+xMinInt >= 1 and x+xMinInt < h);
+        *tmpArray *= -delta;
+    }
+}
+
+__global__ void yMaxDeltaIntegralFracKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+    inData   += id *  inDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        const float xMinFrac = xMinInt-xMin[globalWindowIdx]+1;
+
+        // const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        // const float yMinFrac = yMinInt-yMin[globalWindowIdx]+1;
+
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        const float xMaxFrac = xMax[globalWindowIdx]-xMaxInt;
+
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+        // const float yMaxFrac = yMax[globalWindowIdx]-yMaxInt;
+
+        // const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        // const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMinInt-1))];
+        const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+        const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += trCorner * (x+xMinInt >= h ? 1.0f : xMinFrac);
+        delta += brCorner * (x+xMaxInt <  1 ? 1.0f : xMaxFrac);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+
+        delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
+        *tmpArray *= delta;
+    }
+}
+
+__global__ void yMinDeltaIntegralFracKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+    inData   += id *  inDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        const float xMinFrac = xMinInt-xMin[globalWindowIdx]+1;
+
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        // const float yMinFrac = yMinInt-yMin[globalWindowIdx]+1;
+
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        const float xMaxFrac = xMax[globalWindowIdx]-xMaxInt;
+
+        // const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+        // const float yMaxFrac = yMax[globalWindowIdx]-yMaxInt;
+
+        const float tlCorner = y+yMinInt <  1 or x+xMinInt <  1 ? 0 :
+                             inData[
+                                max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        const float blCorner = y+yMinInt <  1 or x+xMaxInt >= h ? 0 :
+                            inData[
+                                max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+                                max(0,min(w-1,y+yMinInt-1))];
+        // const float trCorner = y+yMaxInt >= w or x+xMinInt <  1 ? 0 :
+        //                      inData[
+        //                         max(0,min(h-1,x+xMinInt-1)) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+        // const float brCorner = y+yMaxInt >= w or x+xMaxInt >= h ? 0 :
+        //                     inData[
+        //                         max(0,min(h-1,x+xMaxInt  )) * inDataStrideRow +
+        //                         max(0,min(w-1,y+yMaxInt  ))];
+
+        float delta = 0;
+
+        delta += tlCorner * (x+xMinInt >= h ? 1.0f : xMinFrac);
+        delta += blCorner * (x+xMaxInt <  1 ? 1.0f : xMaxFrac);
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+
+        delta *= (y+yMinInt >= 1 and y+yMinInt < w);
+        *tmpArray *= -delta;
+    }
+}
+
+void backwardFracCuda(THCState *state, const int paramId,
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const float *inData, int inDataStrideRow, const int inDataStrideChannel,
+    const int strideH, const int strideW) {
+
+    if (strideH != 1 or strideW != 1) {
+        THError("NYI");
+        // strided::backwardFracCuda(
+        //     intData, tmpArray, nWindows, h, w,
+        //     xMin, xMax, yMin, yMax, inData, inDataStrideRow,
+        //     strideH, strideW);
+        return;
+    }
+
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+
+    switch (paramId) {
+    case 0:
+        xMinDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, yMin, yMax,
+            inData, inDataStrideRow, inDataStrideChannel); break;
+    case 1:
+        xMaxDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMax, yMin, yMax,
+            inData, inDataStrideRow, inDataStrideChannel); break;
+    case 2:
+        yMinDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, xMax, yMin,
+            inData, inDataStrideRow, inDataStrideChannel); break;
+    case 3:
+        yMaxDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, xMax, yMax,
+            inData, inDataStrideRow, inDataStrideChannel); break;
+    }
+    THCudaCheck(cudaGetLastError());
+}
+
+__global__ void xMaxDeltaIntegralKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMax, const float *yMin, const float *yMax) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        // const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+
+        float delta = 0;
+
+        delta += 
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1) 
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt  , h))*(w+1) 
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt+1, h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+        delta +=
+            intData[max(0,min(x+xMaxInt  , h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+
+        delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
+        *tmpArray *= delta;
+    }
+}
+
+__global__ void xMinDeltaIntegralKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *yMin, const float *yMax) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        // const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+
+        float delta = 0;
+
+        delta += 
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMaxInt, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt  , h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt-1, h))*(w+1)
+                  + max(0,min(y+yMinInt, w))];
+
+        delta *= (x+xMinInt >= 1 and x+xMinInt < h);
+        *tmpArray *= -delta;
+    }
+}
+
+__global__ void yMaxDeltaIntegralKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMax) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        // const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+
+        float delta = 0;
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt+1, w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMaxInt  , w))];
+
+        delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
+        *tmpArray *= delta;
+    }
+}
+
+__global__ void yMinDeltaIntegralKernel(
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin) {
+ 
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    tmpArray += id; // tmpArray now points to our output pixel
+
+    const int y = id % w + 1; id /= w; // 1-indexed
+    const int x = id % h + 1; id /= h; // 1-indexed
+    const int windowIdx = id % nWindows; id /= nWindows;
+
+    // `id` is now is now the current global input plane number
+    intData  += id * intDataStrideChannel;
+
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
+
+        const int xMinInt = (int)ceil(xMin[globalWindowIdx]-1);
+        const int yMinInt = (int)ceil(yMin[globalWindowIdx]-1);
+        const int xMaxInt = (int)floor(xMax[globalWindowIdx]);
+        // const int yMaxInt = (int)floor(yMax[globalWindowIdx]);
+
+        float delta = 0;
+
+        delta += 
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta -=
+            intData[max(0,min(x+xMaxInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+        delta -=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt  , w))];
+        delta +=
+            intData[max(0,min(x+xMinInt, h))*(w+1)
+                  + max(0,min(y+yMinInt-1, w))];
+
+        delta *= (y+yMinInt >= 1 and y+yMinInt < w);
+        *tmpArray *= -delta;
+    }
+}
+
+void backwardCuda(THCState *state, const int paramId,
+    const float *intData, const int intDataStrideChannel, float *tmpArray,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *xMin, const float *xMax, const float *yMin, const float *yMax,
+    const int strideH, const int strideW) {
+
+    if (strideH != 1 or strideW != 1) {
+        THError("NYI");
+        // strided::backwardFracCuda(
+        //     intData, tmpArray, nWindows, h, w,
+        //     xMin, xMax, yMin, yMax, inData, inDataStrideRow,
+        //     strideH, strideW);
+        return;
+    }
+
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+
+    switch (paramId) {
+    case 0:
+        xMinDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, yMin, yMax); break;
+    case 1:
+        xMaxDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMax, yMin, yMax); break;
+    case 2:
+        yMinDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, xMax, yMin); break;
+    case 3:
+        yMaxDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, tmpArray,
+            batchSize, nInputPlane, nWindows, h, w,
+            xMin, xMax, yMax); break;
+    }
     THCudaCheck(cudaGetLastError());
 }
 

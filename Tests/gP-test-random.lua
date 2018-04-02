@@ -4,7 +4,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1518018971
+-- seed = 1522690711
 torch.manualSeed(seed)
 math.randomseed(seed)
 
@@ -21,8 +21,8 @@ end
 
 for iter = 1,(arg[1] or 1) do
 
-batchSize = 10
-h,w = math.random(2, 5), math.random(2, 5)
+batchSize = 2
+h,w = math.random(2, 50), math.random(2, 50)
 strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
@@ -33,11 +33,13 @@ end
 
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
-int.exact = true
+int.exact = false
 int.smart = true
 int.replicate = true
-int.normalize = true
-int.saveMemoryIntegral = false
+int.normalize = false
+int.saveMemoryIntegral = true
+int.saveMemoryIntegralGradOutput = true
+int.saveMemoryAccGradParameters = true
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
@@ -115,13 +117,6 @@ else
     innerStep = -innerStep
 end
 int:_reparametrize(false)
-
--- GPU forward:
--- 1.4277069568634 total
--- 0.04 indexing, resizing
--- 0.032776079177856 dirtyFix
--- 0.74985118865967 integral
--- 0.55207582473755 Cfunc
 
 timer = torch.Timer()
 for param = lowerLimit,upperLimit,step do
