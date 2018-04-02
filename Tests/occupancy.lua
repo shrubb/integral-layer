@@ -5,7 +5,7 @@ int = IntegralSmartNorm(32, 8, 128, 64):cuda()
 -- require 'cunn'
 -- int = nn.SpatialConvolution(32, 32*8, 3,3, 1,1, 1,1):cuda()
 
-int.normalize = false
+int.normalize = true
 int.exact = true
 int.saveMemoryIntegralInput = false
 int.saveMemoryIntegralGradOutput = false
@@ -16,9 +16,11 @@ batch = torch.CudaTensor(16, 32, 128, 64):fill(0.666)
 
 int:forward(batch)
 gradOutput = int.output:clone()
-int:backward(batch, gradOutput)
+int:updateGradInput(batch, gradOutput)
+int:accGradParameters(batch, gradOutput)
+-- do return end
 
-local nRepeats = 60
+local nRepeats = 30
 
 local timer = torch.Timer()
 for k = 1,nRepeats do
@@ -57,9 +59,9 @@ print('Time for 1 accGradParameters: ' .. (timer:time().real / nRepeats))
 
 -- Int, 32->8 (exact, fastest -- in progress)
 -- 1397 MB
--- Time for 1 forward: 0.061824099222819
--- Time for 1 updateGradInput: 0.050251269340515
--- Time for 1 accGradParameters: 0.12137493292491
+-- Time for 1 forward: 0.047959033648173
+-- Time for 1 updateGradInput: 0.030379867553711
+-- Time for 1 accGradParameters: 0.1229078690211
 
 -- Conv 3x3, 32->32*8
 -- 617 MB

@@ -112,7 +112,7 @@ void backwardPlanewiseFracCuda(struct THCState *state,
     float *inData, int inDataStrideRow,
     int strideH, int strideW);
 
-void backwardFracCuda(struct THCState *state, const int paramId,
+void backwardFracCuda(struct THCState *state, const int paramId, const bool inputIsOnes,
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin, const float *yMax,
@@ -1389,7 +1389,7 @@ do
 
                     -- multiply `self.tmpArrayGPU` by parameter deltas
                     if self.exact then
-                        accGradParametersCFunction(cutorch.getState(), paramId-1,
+                        accGradParametersCFunction(cutorch.getState(), paramId-1, k == 2,
                             intData, intDataStrideChannel, self.tmpArrayGPU:data(),
                             batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
                             self.xMin:data(), self.xMax:data(),

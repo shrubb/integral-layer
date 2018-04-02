@@ -33,13 +33,13 @@ end
 
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
-int.exact = false
+int.exact = true
 int.smart = true
 int.replicate = true
 int.normalize = false
-int.saveMemoryIntegral = true
-int.saveMemoryIntegralGradOutput = true
-int.saveMemoryAccGradParameters = true
+int.saveMemoryIntegral = false
+int.saveMemoryIntegralGradOutput = false
+int.saveMemoryAccGradParameters = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
