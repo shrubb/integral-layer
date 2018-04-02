@@ -451,16 +451,16 @@ void forwardCuda(
     forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
 }
 
-void forwardNoNormReplicateCuda(
+void forwardNoNormReplicateCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateCuda(
+        strided::forwardNoNormReplicateCuda(state,
             intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
+            1, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin, yMax,
             strideH, strideW);
         return;
@@ -479,7 +479,7 @@ void forwardNoNormReplicateCuda(
         xMin, xMax, yMin, yMax);
 }
 
-void forwardNoNormReplicateFracCuda(
+void forwardNoNormReplicateFracCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int h, int w, int nInputPlane, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -487,9 +487,9 @@ void forwardNoNormReplicateFracCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateFracCuda(
+        strided::forwardNoNormReplicateFracCuda(state,
             intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
+            1, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin, yMax,
             inData, inDataStrideRow, inDataStrideChannel,
             strideH, strideW);

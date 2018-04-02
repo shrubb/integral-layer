@@ -16,12 +16,12 @@ void forwardNoNormFrac(
     float xMinCurrFrac, float xMaxCurrFrac, float yMinCurrFrac, float yMaxCurrFrac,
     float *inData, int inDataStride);
 
-void forwardNoNormReplicate(
+void forwardNoNormReplicate(struct THCState *state,
     const float *intData, const int h, const int w, float *outData,
     const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
     const int strideH, const int strideW);
 
-void forwardNoNormReplicateFrac(
+void forwardNoNormReplicateFrac(struct THCState *state,
     const float *intData, const int h, const int w, float *outData,
     const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
     const float xMinCurrFrac, const float xMaxCurrFrac,
@@ -682,7 +682,7 @@ do
                         forwardCFunction = C_lib.forwardNoNormFrac
                     end
 
-                    forwardCFunction(
+                    forwardCFunction(cutorch.getState(),
                         intData, 0, outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -697,7 +697,7 @@ do
                         forwardCFunction = C_lib.forwardNoNorm
                     end
 
-                    forwardCFunction(
+                    forwardCFunction(cutorch.getState(),
                         intData, 0, outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -739,7 +739,7 @@ do
                         forwardCudaFunction = CUDA_lib.forwardNoNormFracCuda
                     end
 
-                    forwardCudaFunction(
+                    forwardCudaFunction(cutorch.getState(),
                         intData, self.integralCuda:stride(1), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),
@@ -754,7 +754,7 @@ do
                         forwardCudaFunction = CUDA_lib.forwardNoNormCuda
                     end
 
-                    forwardCudaFunction(
+                    forwardCudaFunction(cutorch.getState(),
                         intData, self.integralCuda:stride(1), outData,
                         self.h, self.w, self.nInputPlane, self.nWindows,
                         torch.data(self.xMin), torch.data(self.xMax),

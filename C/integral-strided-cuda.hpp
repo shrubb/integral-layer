@@ -1,14 +1,16 @@
+struct THCState;
+
 namespace strided {
 
-void forwardNoNormReplicateCuda(
+void forwardNoNormReplicateCuda(THCState *state,
     const float *intData, const int intDataStrideChannel, float *outData,
-    const int h, const int w, const int nInputPlane, const int nWindows,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin, const float *yMax,
     const int strideH, const int strideW);
 
-void forwardNoNormReplicateFracCuda(
+void forwardNoNormReplicateFracCuda(THCState *state,
     const float *intData, const int intDataStrideChannel, float *outData,
-    const int h, const int w, const int nInputPlane, const int nWindows,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin, const float *yMax,
     const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
     const int strideH, const int strideW);

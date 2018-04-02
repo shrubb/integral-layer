@@ -257,19 +257,25 @@ __global__ void forwardKernel(
 }
 
 __global__ void forwardNoNormReplicateKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax) {
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax) {
 
-    const int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    const int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    const int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
+    int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    outData += id; // outData now points to our output pixel
 
-    const int inPlaneIdx = z / nWindows;
+    const int y = id % w; id /= w;
+    const int x = id % h; id /= h;
+    const int windowIdx = id % nWindows; id /= nWindows;
 
-    intData += intDataStrideChannel * inPlaneIdx;
+    // `id` is now is now the current global input plane number
+    intData += id * intDataStrideChannel;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
+
+    if (batchIdx < batchSize) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -279,39 +285,49 @@ __global__ void forwardNoNormReplicateKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        const int t = max(0, min(x+(int) ceil(xMin[z])  , h-1) );
-        const int b = max(1, min(x+(int)floor(xMax[z])+1, h  ) );
-        const int l = max(0, min(y+(int) ceil(yMin[z])  , w-1) );
-        const int r = max(1, min(y+(int)floor(yMax[z])+1, w  ) );
+        const int xMinCurr = (int)ceil(xMin[globalWindowIdx]);
+        const int yMinCurr = (int)ceil(yMin[globalWindowIdx]);
+        const int xMaxCurr = (int)floor(xMax[globalWindowIdx]) + 1;
+        const int yMaxCurr = (int)floor(yMax[globalWindowIdx]) + 1;
 
-        double outValue = 0;
+        const int t = max(0, min(x+xMinCurr, h-1) );
+        const int b = max(1, min(x+xMaxCurr, h)   );
+        const int l = max(0, min(y+yMinCurr, w-1) );
+        const int r = max(1, min(y+yMaxCurr, w)   );
+
+        float outValue = 0;
 
         outValue += intData[b*(w+1) + r];
         outValue -= intData[t*(w+1) + r];
         outValue -= intData[b*(w+1) + l];
         outValue += intData[t*(w+1) + l];
 
-        outData[z*w*h + x*w + y] = outValue;
+        *outData = outValue;
     }
 }
 
 __global__ void forwardNoNormReplicateFracKernel(
-    float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    float *inData, int inDataStrideRow, int inDataStrideChannel) {
+    const float *intData, const int intDataStrideChannel, float *outData,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
+    const float *const xMin, const float *const xMax,
+    const float *const yMin, const float *const yMax,
+    const float *inData, const int inDataStrideRow, const int inDataStrideChannel) {
 
     int id = BLOCK_SIZE * BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    outData += id; // outData now points to our output pixel
+
     const int y = id % w; id /= w;
     const int x = id % h; id /= h;
-    const int & z = id;
+    const int windowIdx = id % nWindows; id /= nWindows;
 
-    const int inPlaneIdx = z / nWindows;
+    // `id` is now is now the current global input plane number
+    intData += id * intDataStrideChannel;
+    inData  += id *  inDataStrideChannel;
 
-    intData += intDataStrideChannel * inPlaneIdx;
-    inData  +=  inDataStrideChannel * inPlaneIdx;
+    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
+    const int & batchIdx = id;
 
-    if (x < h and y < w and z < nInputPlane*nWindows) {
+    if (batchIdx < batchSize) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -321,20 +337,25 @@ __global__ void forwardNoNormReplicateFracKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        const int   xMinCurr = (int)ceil(xMin[z]);
-        const float xMinCurrFrac = (float)xMinCurr - xMin[z];
-        const int   yMinCurr = (int)ceil(yMin[z]);
-        const float yMinCurrFrac = (float)yMinCurr - yMin[z];
+        const int   xMinCurr = (int)ceil(xMin[globalWindowIdx]);
+        const float xMinCurrFrac = (float)xMinCurr - xMin[globalWindowIdx];
+        const int   yMinCurr = (int)ceil(yMin[globalWindowIdx]);
+        const float yMinCurrFrac = (float)yMinCurr - yMin[globalWindowIdx];
 
-        const float xMaxCurrFrac = xMax[z] - floor(xMax[z]);
-        const int   xMaxCurr = (int)floor(xMax[z]) + 1;
-        const float yMaxCurrFrac = yMax[z] - floor(yMax[z]);
-        const int   yMaxCurr = (int)floor(yMax[z]) + 1;
+        const float xMaxCurrFrac = xMax[globalWindowIdx] - floor(xMax[globalWindowIdx]);
+        const int   xMaxCurr = (int)floor(xMax[globalWindowIdx]) + 1;
+        const float yMaxCurrFrac = yMax[globalWindowIdx] - floor(yMax[globalWindowIdx]);
+        const int   yMaxCurr = (int)floor(yMax[globalWindowIdx]) + 1;
 
         const int t = max(0, min(x+xMinCurr, h-1) );
         const int b = max(1, min(x+xMaxCurr, h)   );
         const int l = max(0, min(y+yMinCurr, w-1) );
         const int r = max(1, min(y+yMaxCurr, w)   );
+
+        const int bAdv = max(1, min(x+xMaxCurr+1, h  ));
+        const int rAdv = max(1, min(y+yMaxCurr+1, w  ));
+        const int tAdv = max(0, min(x+xMinCurr-1, h-1));
+        const int lAdv = max(0, min(y+yMinCurr-1, w-1));
 
         double outValue = 0;
 
@@ -345,51 +366,31 @@ __global__ void forwardNoNormReplicateFracKernel(
 
         // -- xMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr+1,h))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(1,min(x+xMaxCurr+1,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            ) * xMaxCurrFrac;
+            ( intData[bAdv*(w+1) + r]
+            - intData[b   *(w+1) + r]
+            - intData[bAdv*(w+1) + l]
+            + intData[b   *(w+1) + l]) * xMaxCurrFrac;
 
         // -- yMax border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(1,min(y+yMaxCurr+1,w))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr+1,w))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            ) * yMaxCurrFrac;
+            ( intData[b*(w+1) + rAdv]
+            - intData[b*(w+1) + r   ]
+            - intData[t*(w+1) + rAdv]
+            + intData[t*(w+1) + r   ]) * yMaxCurrFrac;
 
         // -- xMin border
         outValue +=
-            ( intData[max(0,min(x+xMinCurr,h-1))*(w+1) 
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(1,min(y+yMaxCurr,w))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr-1,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            ) * xMinCurrFrac;
+            ( intData[t   *(w+1) + r]
+            - intData[tAdv*(w+1) + r]
+            - intData[t   *(w+1) + l]
+            + intData[tAdv*(w+1) + l]) * xMinCurrFrac;
 
         // -- yMin border
         outValue +=
-            ( intData[max(1,min(x+xMaxCurr,h))*(w+1) 
-                + max(0,min(y+yMinCurr,w-1))]
-            - intData[max(1,min(x+xMaxCurr,h))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
-            - intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr,w-1))]
-            + intData[max(0,min(x+xMinCurr,h-1))*(w+1)
-                + max(0,min(y+yMinCurr-1,w-1))]
-            ) * yMinCurrFrac;
+            ( intData[b*(w+1) + l   ]
+            - intData[b*(w+1) + lAdv]
+            - intData[t*(w+1) + l   ]
+            + intData[t*(w+1) + lAdv]) * yMinCurrFrac;
 
         // -- corner pixels
         outValue += 
@@ -420,7 +421,7 @@ __global__ void forwardNoNormReplicateFracKernel(
                 x+xMinCurr-1 <  0   or
                 y+yMinCurr-1 <  0) ? 0 : inData[(x+xMinCurr-1)*inDataStrideRow + (y+yMinCurr-1)]);
 
-        outData[z*w*h + x*w + y] = outValue;
+        *outData = outValue;
     }
 }
 
@@ -440,56 +441,54 @@ void forwardCuda(THCState *state,
 
 void forwardNoNormReplicateCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
+    int batchSize, int nInputPlane, int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateCuda(
+        strided::forwardNoNormReplicateCuda(state,
             intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
+            batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin, yMax,
             strideH, strideW);
         return;
     }
 
-    // TODO: 1D grid
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
-    dim3 dimGrid(
-        (h + dimBlock.x - 1) / dimBlock.x, 
-        (w + dimBlock.y - 1) / dimBlock.y, 
-        (nInputPlane*nWindows + dimBlock.z - 1) / dimBlock.z);
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
-    forwardNoNormReplicateKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    forwardNoNormReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
         intData, intDataStrideChannel, outData,
-        h, w, nInputPlane, nWindows,
+        batchSize, nInputPlane, nWindows, h, w,
         xMin, xMax, yMin, yMax);
     THCudaCheck(cudaGetLastError());
 }
 
 void forwardNoNormReplicateFracCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
+    int batchSize, int nInputPlane, int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::forwardNoNormReplicateFracCuda(
+        strided::forwardNoNormReplicateFracCuda(state,
             intData, intDataStrideChannel, outData,
-            h, w, nInputPlane, nWindows,
+            batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin, yMax,
             inData, inDataStrideRow, inDataStrideChannel,
             strideH, strideW);
         return;
     }
 
-    dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
-    dim3 dimGrid((nInputPlane*nWindows*h*w + dimBlock.x - 1) / dimBlock.x);
+    const int NUM_THREADS = BLOCK_SIZE * BLOCK_SIZE;
+    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
-    forwardNoNormReplicateFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    forwardNoNormReplicateFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
         intData, intDataStrideChannel, outData,
-        h, w, nInputPlane, nWindows, 
+        batchSize, nInputPlane, nWindows, h, w,
         xMin, xMax, yMin, yMax,
         inData, inDataStrideRow, inDataStrideChannel);
     THCudaCheck(cudaGetLastError());

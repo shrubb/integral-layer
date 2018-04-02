@@ -59,13 +59,13 @@ local C_lib = ffi.load('C/lib/libintegral-c.so')
 ffi.cdef [[
 void forwardNoNormReplicateCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
+    int batchSize, int nInputPlane, int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW);
 
 void forwardNoNormReplicateFracCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
-    int h, int w, int nInputPlane, int nWindows,
+    int batchSize, int nInputPlane, int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
     const int strideH, const int strideW);
@@ -672,52 +672,44 @@ do
 
         assert(input:size(2) == self.nInputPlane)
         assert(input:size(3) == self.h and input:size(4) == self.w)
+        assert(self.xMin:stride(1) == self.xMin:size(2))
 
         -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s        
         if self.normalize then
             self.outputOnes:resize(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
             assert(self.outputOnes:stride(3) == self.wOut) -- for C function safety
 
-            local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
-            local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
+            local forwardCFunction
 
-            for batchIdx = 1,batchSize do
-                -- TODO: efficient memory usage
-                local outData = torch.data(self.outputOnes[batchIdx])
-                local intData = torch.data(self.onesIntegral)
-
-                local forwardCFunction
-
-                if self.exact then
-                    if self.replicate then
-                        forwardCFunction = CUDA_lib.forwardNoNormReplicateFracCuda
-                    else
-                        error('NYI')
-                        forwardCFunction = C_lib.forwardNoNormFrac
-                    end
-
-                    forwardCFunction(cutorch.getState(),
-                        intData, 0, outData,
-                        self.h, self.w, self.nInputPlane, self.nWindows,
-                        torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(self.ones), self.ones:stride(1), 0,
-                        self.strideH, self.strideW)
+            if self.exact then
+                if self.replicate then
+                    forwardCFunction = CUDA_lib.forwardNoNormReplicateFracCuda
                 else
-                    if self.replicate then
-                        forwardCFunction = CUDA_lib.forwardNoNormReplicateCuda
-                    else
-                        error('NYI')
-                        forwardCFunction = C_lib.forwardNoNorm
-                    end
-
-                    forwardCFunction(cutorch.getState(),
-                        intData, 0, outData,
-                        self.h, self.w, self.nInputPlane, self.nWindows,
-                        torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax),
-                        self.strideH, self.strideW)
+                    error('NYI')
+                    forwardCFunction = C_lib.forwardNoNormFrac
                 end
+
+                forwardCFunction(cutorch.getState(),
+                    self.onesIntegral:data(), 0, self.outputOnes:data(),
+                    batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax),
+                    torch.data(self.ones), self.ones:stride(1), 0,
+                    self.strideH, self.strideW)
+            else
+                if self.replicate then
+                    forwardCFunction = CUDA_lib.forwardNoNormReplicateCuda
+                else
+                    error('NYI')
+                    forwardCFunction = C_lib.forwardNoNorm
+                end
+
+                forwardCFunction(cutorch.getState(),
+                    self.onesIntegral:data(), 0, self.outputOnes:data(),
+                    batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
+                    torch.data(self.xMin), torch.data(self.xMax),
+                    torch.data(self.yMin), torch.data(self.yMax),
+                    self.strideH, self.strideW)
             end
         end
 
@@ -741,24 +733,56 @@ do
                 self.tmpArrayGPU:resize(self.integralCuda:nElement())
             end
 
-            if not self.saveMemoryIntegralInput then
-                CUDA_lib.integralImageCuda(cutorch.getState(),
-                    input:data(), self.integralCuda:data(),
-                    batchSize*self.nInputPlane, self.h, self.w,
-                    self.tmpArrayGPU:data())
-            end
+            if self.saveMemoryIntegralInput then
+                -- slow way, process samples 1 by 1
+                for batchIdx = 1,batchSize do
 
-            for batchIdx = 1,batchSize do
-
-                if self.saveMemoryIntegralInput then
                     CUDA_lib.integralImageCuda(cutorch.getState(),
                         input[batchIdx]:data(), self.integralCuda:data(),
                         self.nInputPlane, self.h, self.w,
                         self.tmpArrayGPU:data())
-                end
+                
+                    local forwardCudaFunction
 
-                local intData = self.integralCuda[self.saveMemoryIntegralInput and 1 or batchIdx]:data()
-                local outData = self.outputNonNorm[batchIdx]:data()
+                    if self.exact then
+                        if self.replicate then
+                            forwardCudaFunction = CUDA_lib.forwardNoNormReplicateFracCuda
+                        else
+                            error('NYI')
+                            forwardCudaFunction = CUDA_lib.forwardNoNormFracCuda
+                        end
+
+                        forwardCudaFunction(cutorch.getState(),
+                            self.integralCuda:data(), self.integralCuda:stride(1), 
+                            self.outputNonNorm[batchIdx]:data(),
+                            1, self.nInputPlane, self.nWindows, self.h, self.w,
+                            torch.data(self.xMin), torch.data(self.xMax),
+                            torch.data(self.yMin), torch.data(self.yMax),
+                            torch.data(input[batchIdx]), input:stride(3), input:stride(2),
+                            self.strideH, self.strideW)
+                    else
+                        if self.replicate then
+                            forwardCudaFunction = CUDA_lib.forwardNoNormReplicateCuda
+                        else
+                            error('NYI')
+                            forwardCudaFunction = CUDA_lib.forwardNoNormCuda
+                        end
+
+                        forwardCudaFunction(cutorch.getState(),
+                            self.integralCuda:data(), self.integralCuda:stride(1), 
+                            self.outputNonNorm[batchIdx]:data(),
+                            1, self.nInputPlane, self.nWindows, self.h, self.w,
+                            torch.data(self.xMin), torch.data(self.xMax),
+                            torch.data(self.yMin), torch.data(self.yMax),
+                            self.strideH, self.strideW)
+                    end
+                end -- for batchIdx
+            else -- NOT self.saveMemoryIntegralInput
+                -- faster option, process whole batch at once
+                CUDA_lib.integralImageCuda(cutorch.getState(),
+                    input:data(), self.integralCuda:data(),
+                    batchSize*self.nInputPlane, self.h, self.w,
+                    self.tmpArrayGPU:data())
             
                 local forwardCudaFunction
 
@@ -771,11 +795,11 @@ do
                     end
 
                     forwardCudaFunction(cutorch.getState(),
-                        intData, self.integralCuda:stride(self.saveMemoryIntegralInput and 1 or 2), outData,
-                        self.h, self.w, self.nInputPlane, self.nWindows,
+                        self.integralCuda:data(), self.integralCuda:stride(2), self.outputNonNorm:data(),
+                        batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
-                        torch.data(input[batchIdx]), input:stride(3), input:stride(2),
+                        torch.data(input), input:stride(3), input:stride(2),
                         self.strideH, self.strideW)
                 else
                     if self.replicate then
@@ -786,13 +810,13 @@ do
                     end
 
                     forwardCudaFunction(cutorch.getState(),
-                        intData, self.integralCuda:stride(self.saveMemoryIntegralInput and 1 or 2), outData,
-                        self.h, self.w, self.nInputPlane, self.nWindows,
+                        self.integralCuda:data(), self.integralCuda:stride(2), self.outputNonNorm:data(),
+                        batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
                         torch.data(self.xMin), torch.data(self.xMax),
                         torch.data(self.yMin), torch.data(self.yMax),
                         self.strideH, self.strideW)
                 end
-            end -- for batchIdx
+            end
         end -- do
 
         if self.normalize then

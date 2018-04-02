@@ -22,7 +22,7 @@ end
 for iter = 1,(arg[1] or 1) do
 
 batchSize = 10
-h,w = math.random(2, 4), math.random(2, 4)
+h,w = math.random(2, 5), math.random(2, 5)
 strideH, strideW = 1,1
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
