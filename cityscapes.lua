@@ -298,6 +298,8 @@ function cityscapes.updateConfusionMatrix(confMatrix, predictedLabels, labels)
     -- confMatrix:      long, 19x19
     -- predictedLabels: long, 128x256
     -- labels:          byte, 128x256
+    assert(predictedLabels:nElement() == labels:nElement())
+    assert(predictedLabels:isContiguous() and labels:isContiguous())
     C_lib.updateConfusionMatrix(
         torch.data(confMatrix), torch.data(predictedLabels),
         torch.data(labels), predictedLabels:nElement(),
