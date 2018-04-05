@@ -1,7 +1,7 @@
 local utils = {}
 
 function utils.MSRinit(model)
-   for k,v in pairs(model:findModules('nn.SpatialConvolution')) do
+   for k,v in pairs(model:findModules('cudnn.SpatialConvolution')) do
       local n = v.kW*v.kH*v.nInputPlane
       v.weight:normal(0,math.sqrt(2/n))
       if v.bias then v.bias:zero() end
@@ -15,7 +15,7 @@ function utils.FCinit(model)
 end
 
 function utils.DisableBias(model)
-   for i,v in ipairs(model:findModules'nn.SpatialConvolution') do
+   for i,v in ipairs(model:findModules'cudnn.SpatialConvolution') do
       v.bias = nil
       v.gradBias = nil
    end

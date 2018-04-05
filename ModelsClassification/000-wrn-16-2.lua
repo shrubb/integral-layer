@@ -1,4 +1,4 @@
--- Total operations: 328657299
+-- Total operations: 101476755
 
 --  Wide Residual Network
 --  This is an implementation of the wide residual networks described in:
@@ -122,7 +122,7 @@ end
 
 return createModel{
    num_classes  = nClasses,
-   depth        = 40,
+   depth        = 16,
    widen_factor = 2,
    dropout      = 0.3,
 }
