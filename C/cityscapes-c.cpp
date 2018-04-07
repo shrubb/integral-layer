@@ -2,7 +2,7 @@ extern "C" {
 
 void updateConfusionMatrix(
     long *confMatrix, const long *predictedLabels,
-    const unsigned char *labels, const int numPixels,
+    const long *labels, const int numPixels,
     const int nClasses) {
     
     long classPredicted, classTrue;

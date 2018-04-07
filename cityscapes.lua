@@ -149,7 +149,7 @@ function cityscapes.loadSample(files, option)
         if labels:size(1) == 512 and labels:size(2) == 1024 then
             labels = labelsOriginal
         else
-            local labelsTorch = torch.ByteTensor(labelsOriginal:size()):fill(255)
+            local labelsTorch = torch.LongTensor(labelsOriginal:size()):fill(255)
             -- shift labels according to
             -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
             local classMap = {
@@ -270,7 +270,7 @@ function cityscapes.calcClassProbs(trainFiles)
 end
 
 function cityscapes.labelsToEval(labels)
-    local retval = torch.ByteTensor(cityscapes.dsize[2], cityscapes.dsize[1])
+    local retval = torch.LongTensor(cityscapes.dsize[2], cityscapes.dsize[1])
 
     local classMap = {
         7, 8, 11, 12, 13, 17, 19, 20, 21,
@@ -290,16 +290,22 @@ local C_lib = ffi.load('C/lib/libcityscapes-c.so')
 ffi.cdef [[
 void updateConfusionMatrix(
     long *confMatrix, long *predictedLabels,
-    unsigned char *labels, int numPixels,
+    long *labels, int numPixels,
     int nClasses);
 ]]
 
 function cityscapes.updateConfusionMatrix(confMatrix, predictedLabels, labels)
     -- confMatrix:      long, 19x19
     -- predictedLabels: long, 128x256
-    -- labels:          byte, 128x256
+    -- labels:          long, 128x256
+    assert(confMatrix:type() == 'torch.LongTensor')
+    assert(confMatrix:size(1) == confMatrix:size(2) and confMatrix:size(1) == cityscapes.nClasses)
+
+    assert(predictedLabels:type() == 'torch.LongTensor')
+    assert(labels:type() == 'torch.LongTensor')
     assert(predictedLabels:nElement() == labels:nElement())
     assert(predictedLabels:isContiguous() and labels:isContiguous())
+
     C_lib.updateConfusionMatrix(
         torch.data(confMatrix), torch.data(predictedLabels),
         torch.data(labels), predictedLabels:nElement(),

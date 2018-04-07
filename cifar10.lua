@@ -69,7 +69,7 @@ local C_lib = ffi.load('C/lib/libcityscapes-c.so')
 ffi.cdef [[
 void updateConfusionMatrix(
     long *confMatrix, long *predictedLabels,
-    unsigned char *labels, int numPixels,
+    long *labels, int numPixels,
     int nClasses);
 ]]
 
@@ -82,7 +82,8 @@ function dataset.updateConfusionMatrix(confMatrix, predictedLabels, labels)
     assert(confMatrix:type() == 'torch.LongTensor')
     assert(confMatrix:size(1) == confMatrix:size(2) and confMatrix:size(1) == dataset.nClasses)
     assert(predictedLabels:type() == 'torch.LongTensor')
-    assert(labels:type() == 'torch.ByteTensor')
+    
+    assert(labels:type() == 'torch.LongTensor')
     C_lib.updateConfusionMatrix(
         torch.data(confMatrix), torch.data(predictedLabels),
         torch.data(labels), predictedLabels:nElement(),
