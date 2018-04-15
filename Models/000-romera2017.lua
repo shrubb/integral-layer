@@ -12,7 +12,7 @@ require 'nn'
 require 'cudnn'
 
 local SpatialConvolution = cudnn.SpatialConvolution
-local SpatialDilatedConvolution = nn.SpatialDilatedConvolution
+local SpatialDilatedConvolution = cudnn.SpatialDilatedConvolution
 local SpatialFullConvolution = cudnn.SpatialFullConvolution
 local ReLU = cudnn.ReLU
 local SpatialBatchNormalization = cudnn.SpatialBatchNormalization
@@ -104,10 +104,7 @@ model:add(upsampler(64, 16))
 model:add(nonBt1D(16))
 model:add(nonBt1D(16))
 
-model:add(SpatialFullConvolution(16, nClasses, 3,3, 2,2, 1,1, 1,1))
-
-model:add(nn.View(nClasses, w*h):setNumInputDims(3))
-model:add(nn.Transpose({2, 1}):setNumInputDims(2))
+model:add(SpatialFullConvolution(16, nClasses+1, 3,3, 2,2, 1,1, 1,1))
 
 local GSconfig = {
 }

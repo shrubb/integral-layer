@@ -10,7 +10,7 @@ void updateConfusionMatrix(
         classPredicted = predictedLabels[i]-1;
         classTrue = labels[i]-1;
 
-        if (classTrue != 254) {
+        if (classTrue != nClasses and classPredicted != nClasses) {
             ++confMatrix[classTrue*nClasses + classPredicted];
         }
     }

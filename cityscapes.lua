@@ -9,7 +9,7 @@ local cityscapes = {}
 
 cityscapes.mean = torch.FloatTensor{0.28470638394356, 0.32577008008957, 0.28766867518425}
 cityscapes.std  = torch.FloatTensor{0.18671783804893, 0.1899059265852,  0.18665011227131}
-cityscapes.dsize = {512, 256}
+cityscapes.dsize = {1024, 512}
 cityscapes.nClasses = 19
 -- precomputed class frequencies
 cityscapes.classProbs = torch.FloatTensor {
@@ -35,6 +35,8 @@ cityscapes.classProbs = torch.FloatTensor {
 }
 -- cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
 cityscapes.classWeights = cityscapes.classProbs:clone():add(1.10):log():pow(-1)
+-- add "unlabeled" class with zero weight
+cityscapes.classWeights = torch.cat(cityscapes.classWeights, torch.FloatTensor{0})
 
 function cityscapes.loadNames(kind, disparityOriginal)
     --[[
@@ -147,9 +149,9 @@ function cityscapes.loadSample(files, option)
         labelsOriginal = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
     
         if labels:size(1) == 512 and labels:size(2) == 1024 then
-            labels = labelsOriginal
+            labels = labelsOriginal:long()
         else
-            local labelsTorch = torch.LongTensor(labelsOriginal:size()):fill(255)
+            local labelsTorch = torch.LongTensor(labelsOriginal:size()):fill(cityscapes.nClasses+1)
             -- shift labels according to
             -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
             local classMap = {
@@ -162,6 +164,7 @@ function cityscapes.loadSample(files, option)
             labels = labelsTorch
         end
     end
+    labels[labels:eq(255)] = cityscapes.nClasses+1 -- "unlabeled" class
 
     -- load disparity if required
     local disparity
