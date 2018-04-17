@@ -5,6 +5,9 @@ require 'cunn'
 optnet = require 'optnet'
 require 'IntegralSmartNorm'
 
+cv = require 'cv'
+require 'cv.imgproc'
+
 cudnn.fastest = false
 cudnn.benchmark = false
 
@@ -20,7 +23,7 @@ valFiles = cityscapes.loadNames('val')
 
 img, labels = cityscapes.loadSample(valFiles[13])
 
-outputDir = 'Guided backprop/' .. os.date()
+outputDir = 'Guided backprop/' .. os.date() .. '/'
 os.execute('mkdir "' .. outputDir .. '" -p')
 
 baseImage = torch.FloatTensor(3, h*3+4, w):fill(1)
@@ -53,7 +56,7 @@ for hIdx = 1,gridSizeH do
         local x = math.floor(h/(gridSizeH+1) * hIdx)
         local y = math.floor(w/(gridSizeW+1) * wIdx)
 
-        if labels[{x, y}] ~= 255 then
+        if labels[{x, y}] ~= 20 then
             table.insert(pixelCoords, {x,y})
 
             local outputImage = baseImage:clone()
@@ -174,12 +177,14 @@ classNames = {
 
 -- ***********************************************************************
 
+require 'gnuplot'
 require 'xlua'
 
 input = nn.utils.addSingletonDimension(img:cuda())
 gradOutput = torch.CudaTensor(h, w, 19):zero()
+plots = {{}, {}}
 
-for modelIdx, modelPath in ipairs(arg) do
+for modelIdx, modelPath in ipairs{arg[1], arg[2]} do
     net = torch.load(modelPath .. '/net.t7')[1]
     if not torch.type(net:get(#net)):find('LogSoftMax') then
         net:add(nn.Contiguous())
@@ -205,8 +210,8 @@ for modelIdx, modelPath in ipairs(arg) do
     end)
 
     for _, m in ipairs(net:findModules('nn.GuidedReLU')) do
-        m:salientBackprop()
-        -- m:normalBackprop()
+        -- m:salientBackprop()
+        m:normalBackprop()
     end
     for _, m in ipairs(net:findModules('nn.GuidedPReLU')) do
         -- m:salientBackprop()
@@ -252,9 +257,11 @@ for modelIdx, modelPath in ipairs(arg) do
         gradOutput[{x, y, classIdx}] = 0
 
         local outputHeatmap = outputImages[pixelIdx]:narrow(2, 1+(h+2)*modelIdx, h)
+        local gradInt
 
         do
             outputHeatmap[1]:copy(net.gradInput:float():abs():sum(2))
+            gradInt = cv.integral{outputHeatmap[1]}
             outputHeatmap[1]:add(-outputHeatmap[1]:min())
             outputHeatmap[1]:div(outputHeatmap[1]:max())
             outputHeatmap:copy(image.y2jet(outputHeatmap[1]*255 + 1))
@@ -266,10 +273,46 @@ for modelIdx, modelPath in ipairs(arg) do
         --     outputHeatmap:div(outputHeatmap:max())
         -- end
 
-        if modelIdx == #arg then
+        if modelIdx == 2 then
             image.save(
-                outputDir .. ('/%03d-%s.png'):format(pixelIdx, className),
+                outputDir .. ('%03d-%s.png'):format(pixelIdx, className),
                 outputImages[pixelIdx])
+        end
+
+        local function clipInt(t)
+            return {
+                math.max(math.min(t[1], h+1), 1),
+                math.max(math.min(t[2], w+1), 1),
+            }
+        end
+
+        local graph = {}
+        for winW = 0,2*w do
+            local winH = winW * (h / w)
+            local windowSum = 
+                gradInt[clipInt{x+winH/2+1, y+winW/2+1}] -
+                gradInt[clipInt{x-winH/2  , y+winW/2+1}] -
+                gradInt[clipInt{x+winH/2+1, y-winW/2  }] +
+                gradInt[clipInt{x-winH/2  , y-winW/2  }]
+            table.insert(graph, windowSum)
+        end
+        graph = torch.Tensor(graph) / gradInt:view(-1)[-1]
+
+        table.insert(plots[modelIdx], graph)
+
+        if modelIdx == 2 then
+            gnuplot.figure()
+            gnuplot.raw('set term png') --postscript color eps')
+            gnuplot.raw('set output \'' .. outputDir .. ('%03d-%s-1.png\''):format(pixelIdx, className))
+            gnuplot.xlabel('Sum window size around target pixel')
+            gnuplot.ylabel('Fraction of gradient values covered by the window')
+            gnuplot.grid('on')
+            gnuplot.plot(
+                {arg[1]:sub(31,33), torch.range(0,2*w), plots[1][pixelIdx], '-'},
+                {arg[2]:sub(31,33), torch.range(0,2*w), plots[2][pixelIdx], '-'}
+            )
+            
+            gnuplot.plotflush()
         end
     end
 
