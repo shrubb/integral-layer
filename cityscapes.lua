@@ -40,7 +40,7 @@ cityscapes.classWeights = torch.cat(cityscapes.classWeights, torch.FloatTensor{0
 
 function cityscapes.loadNames(kind, disparityOriginal)
     --[[
-        `kind`: 'train' or 'val'
+        `kind`: 'train', 'val' or 'test'
         `disparityOriginal`: if true, load original disparities, else those created manually from l+r shots
 
         returns:
@@ -146,12 +146,12 @@ function cityscapes.loadSample(files, option)
     local labels = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
     if labels:size(1) ~= cityscapes.dsize[2] or
        labels:size(2) ~= cityscapes.dsize[1] then
-        labelsOriginal = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
-    
+        local labelsOriginal = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+
         if labels:size(1) == 512 and labels:size(2) == 1024 then
             labels = labelsOriginal:long()
         else
-            local labelsTorch = torch.LongTensor(labelsOriginal:size()):fill(cityscapes.nClasses+1)
+            local labelsTorch = torch.LongTensor():resize(labelsOriginal:size()):fill(cityscapes.nClasses+1)
             -- shift labels according to
             -- https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L61
             local classMap = {
