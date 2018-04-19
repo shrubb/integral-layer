@@ -114,27 +114,6 @@ void integralImageCuda(THCState *state,
         output, w+1));
 }
 
-/*
-extern "C"
-void integralImageInplaceCuda(float *input, float *output, int channels, int h, int w) {
-    int blockSize1D, gridSize1D;
-
-    int totalCols = channels * w;
-    blockSize1D = NUM_THREADS;
-    gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
-    accumulateColsKernel <<<gridSize1D, blockSize1D>>> (input, output, channels, h, w);
-
-    inplace::transpose(true, output, channels * (h+1), w+1);
-
-    int totalRows = channels * h;
-    blockSize1D = NUM_THREADS;
-    gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
-    accumulateColsInplaceTransposedKernel <<<gridSize1D, blockSize1D>>> (output, channels, h, w);
-
-    inplace::transpose(true, output, w+1, channels * (h+1));
-}
-*/
-
 __global__ void accumulateRowsKernel(
     float *input, float *output, int channels, int h, int w) {
     // view multichannel image as a multiline single-channel image
@@ -225,37 +204,6 @@ __global__ void accumulateColsInplaceKernel(float *input, int channels, int h, i
 }
 
 /************************ updateOutput ************************/
-
-__global__ void forwardKernel(
-    float *intData, float *outData, int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
-
-    if (x < h and y < w and z < nWindows) {
-
-        // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
-        // `integral()` behavior. Namely, I(x,0) and I(0,y) are
-        // always 0 (so it's a C-style array sum).
-
-        // However, when computing sums, we subtract values at indices 
-        // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
-        // and yMin, and thus finally they are not affected.
-
-        int t = max(0, min(x+(int)ceil (xMin[z]  ), h) );
-        int b = max(0, min(x+(int)floor(xMax[z]+1), h) );
-        int l = max(0, min(y+(int)ceil (yMin[z]  ), w) );
-        int r = max(0, min(y+(int)floor(yMax[z]+1), w) );
-
-        outData[z*w*h + x*w + y] = areaCoeff[z] *
-            ( intData[b*(w+1) + r]
-            - intData[t*(w+1) + r]
-            - intData[b*(w+1) + l]
-            + intData[t*(w+1) + l]);
-    }
-}
 
 __global__ void forwardNoNormReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *outData,
@@ -441,19 +389,6 @@ __global__ void forwardNoNormReplicateFracKernel(
 }
 
 extern "C"
-void forwardCuda(THCState *state,
-    float *intData, int h, int w, int nWindows, float *outData,
-    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
-
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
-    dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y, (nWindows + dimBlock.z - 1) / dimBlock.z);
-
-    forwardKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> 
-        (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
-    THCudaCheck(cudaGetLastError());
-}
-
-extern "C"
 void forwardNoNormReplicateCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int batchSize, int nInputPlane, int nWindows, int h, int w,
@@ -512,7 +447,7 @@ void forwardNoNormReplicateFracCuda(THCState *state,
 
 /************** Planewise *************/
 
-__global__ void updateGradInputPlanewiseKernel(
+__global__ void updateGradInputReplicatePlanewiseKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax) {
@@ -570,7 +505,7 @@ __global__ void updateGradInputPlanewiseKernel(
     }
 }
 
-__global__ void updateGradInputPlanewiseFracKernel(
+__global__ void updateGradInputReplicatePlanewiseFracKernel(
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -714,14 +649,14 @@ __global__ void updateGradInputPlanewiseFracKernel(
 }
 
 extern "C"
-void updateGradInputPlanewiseCuda(THCState *state,
+void updateGradInputReplicatePlanewiseCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputPlanewiseCuda(
+        strided::updateGradInputReplicatePlanewiseCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;
@@ -732,7 +667,7 @@ void updateGradInputPlanewiseCuda(THCState *state,
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputReplicatePlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax);
@@ -740,7 +675,7 @@ void updateGradInputPlanewiseCuda(THCState *state,
 }
 
 extern "C"
-void updateGradInputPlanewiseFracCuda(THCState *state,
+void updateGradInputReplicatePlanewiseFracCuda(THCState *state,
     float *gradOutputIntData, float *gradInputData,
     int h, int w, int nWindows,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -748,7 +683,7 @@ void updateGradInputPlanewiseFracCuda(THCState *state,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputPlanewiseFracCuda(
+        strided::updateGradInputReplicatePlanewiseFracCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax,
             gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
@@ -761,7 +696,7 @@ void updateGradInputPlanewiseFracCuda(THCState *state,
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputReplicatePlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
@@ -771,7 +706,7 @@ void updateGradInputPlanewiseFracCuda(THCState *state,
 
 /****************** Single-kernel updateGradInput (faster) **************/
 
-__global__ void updateGradInputKernel(
+__global__ void updateGradInputReplicateKernel(
     const float *gradOutputIntData, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows,
     const int h, const int w,
@@ -832,7 +767,7 @@ __global__ void updateGradInputKernel(
     }
 }
 
-__global__ void updateGradInputFracKernel(
+__global__ void updateGradInputReplicateFracKernel(
     const float *gradOutputIntData, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows,
     const int h, const int w,
@@ -979,7 +914,7 @@ __global__ void updateGradInputFracKernel(
 }
 
 extern "C"
-void updateGradInputCuda(THCState *state,
+void updateGradInputReplicateCuda(THCState *state,
     const float *gradOutputIntData, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *const xMin, const float *const xMax,
@@ -999,7 +934,7 @@ void updateGradInputCuda(THCState *state,
     const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
     const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
-    updateGradInputKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, tmpArray,
         batchSize, nInputPlane, nWindows,
         h, w, xMin, xMax, yMin, yMax);
@@ -1007,7 +942,7 @@ void updateGradInputCuda(THCState *state,
 }
 
 extern "C"
-void updateGradInputFracCuda(THCState *state,
+void updateGradInputReplicateFracCuda(THCState *state,
     const float *gradOutputIntData, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *const xMin, const float *const xMax,
@@ -1029,7 +964,7 @@ void updateGradInputFracCuda(THCState *state,
     const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
     const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
-    updateGradInputFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+    updateGradInputReplicateFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
         gradOutputIntData, tmpArray,
         batchSize, nInputPlane, nWindows,
         h, w, xMin, xMax, yMin, yMax,
@@ -1039,7 +974,7 @@ void updateGradInputFracCuda(THCState *state,
 
 /************************ accGradParameters planewise ************************/
 
-__global__ void xMaxDeltaIntegralPlanewiseFracKernel(
+__global__ void xMaxDeltaIntegralReplicatePlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
@@ -1106,7 +1041,7 @@ __global__ void xMaxDeltaIntegralPlanewiseFracKernel(
     }
 }
 
-__global__ void xMinDeltaIntegralPlanewiseFracKernel(
+__global__ void xMinDeltaIntegralReplicatePlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
@@ -1173,7 +1108,7 @@ __global__ void xMinDeltaIntegralPlanewiseFracKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralPlanewiseFracKernel(
+__global__ void yMaxDeltaIntegralReplicatePlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
@@ -1240,7 +1175,7 @@ __global__ void yMaxDeltaIntegralPlanewiseFracKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralPlanewiseFracKernel(
+__global__ void yMinDeltaIntegralReplicatePlanewiseFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
@@ -1308,7 +1243,7 @@ __global__ void yMinDeltaIntegralPlanewiseFracKernel(
 }
 
 extern "C"
-void backwardPlanewiseFracCuda(THCState *state,
+void backwardReplicatePlanewiseFracCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
@@ -1316,7 +1251,7 @@ void backwardPlanewiseFracCuda(THCState *state,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::backwardFracCuda(
+        strided::backwardReplicateFracCuda(
             intData, tmpArray, nWindows, h, w,
             xMin, xMax, yMin, yMax, inData, inDataStrideRow,
             strideH, strideW);
@@ -1326,25 +1261,25 @@ void backwardPlanewiseFracCuda(THCState *state,
     dim3 dimBlock(NUM_THREADS);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMaxDeltaIntegralReplicatePlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w, nWindows, h, w,
         xMax, yMin, yMax, inData, inDataStrideRow);
 
-    xMinDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMinDeltaIntegralReplicatePlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w, nWindows, h, w,
         xMin, yMin, yMax, inData, inDataStrideRow);
 
-    yMaxDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMaxDeltaIntegralReplicatePlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMax, inData, inDataStrideRow);
 
-    yMinDeltaIntegralPlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMinDeltaIntegralReplicatePlanewiseFracKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow);
     THCudaCheck(cudaGetLastError());
 }
 
-__global__ void xMaxDeltaIntegralPlanewiseKernel(
+__global__ void xMaxDeltaIntegralReplicatePlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax) {
@@ -1383,7 +1318,7 @@ __global__ void xMaxDeltaIntegralPlanewiseKernel(
     }
 }
 
-__global__ void xMinDeltaIntegralPlanewiseKernel(
+__global__ void xMinDeltaIntegralReplicatePlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax) {
@@ -1422,7 +1357,7 @@ __global__ void xMinDeltaIntegralPlanewiseKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralPlanewiseKernel(
+__global__ void yMaxDeltaIntegralReplicatePlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax) {
@@ -1461,7 +1396,7 @@ __global__ void yMaxDeltaIntegralPlanewiseKernel(
     }
 }
 
-__global__ void yMinDeltaIntegralPlanewiseKernel(
+__global__ void yMinDeltaIntegralReplicatePlanewiseKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin) {
@@ -1501,14 +1436,14 @@ __global__ void yMinDeltaIntegralPlanewiseKernel(
 }
 
 extern "C"
-void backwardPlanewiseCuda(THCState *state,
+void backwardReplicatePlanewiseCuda(THCState *state,
     float *intData, float *tmpArray,
     int nWindows, int h, int w,
     float *xMin, float *xMax, float *yMin, float *yMax,
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::backwardCuda(
+        strided::backwardReplicateCuda(
             intData, tmpArray, nWindows, h, w,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;
@@ -1517,19 +1452,19 @@ void backwardPlanewiseCuda(THCState *state,
     dim3 dimBlock(NUM_THREADS);
     dim3 dimGrid((nWindows * h * w + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMaxDeltaIntegralReplicatePlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 0*nWindows*h*w,
         nWindows, h, w, xMax, yMin, yMax);
 
-    xMinDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    xMinDeltaIntegralReplicatePlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 1*nWindows*h*w,
         nWindows, h, w, xMin, yMin, yMax);
 
-    yMaxDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMaxDeltaIntegralReplicatePlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 2*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMax);
 
-    yMinDeltaIntegralPlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
+    yMinDeltaIntegralReplicatePlanewiseKernel <<<dimGrid, dimBlock, 0, THCState_getCurrentStream(state)>>> (
         intData, tmpArray + 3*nWindows*h*w,
         nWindows, h, w, xMin, xMax, yMin);
     THCudaCheck(cudaGetLastError());
@@ -1537,7 +1472,7 @@ void backwardPlanewiseCuda(THCState *state,
 
 /************************ accGradParameters fastest *********************/
 
-__global__ void xMaxDeltaIntegralFracKernel(
+__global__ void xMaxDeltaIntegralReplicateFracKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
@@ -1607,12 +1542,12 @@ __global__ void xMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        *tmpArray *= delta;
+        *tmpArray = delta;
     }
 }
 
 template <bool inputIsOnes>
-__global__ void xMinDeltaIntegralFracKernel(
+__global__ void xMinDeltaIntegralReplicateFracKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
@@ -1680,22 +1615,22 @@ __global__ void xMinDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMinInt >= 1) & (x+xMinInt < h);
-        *tmpArray *= -delta;
+        *tmpArray = -delta;
     }
 }
 
-template __global__ void xMinDeltaIntegralFracKernel<false>(
+template __global__ void xMinDeltaIntegralReplicateFracKernel<false>(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
     const float *inData, const int inDataStrideRow, const int inDataStrideChannel);
-template __global__ void xMinDeltaIntegralFracKernel<true>(
+template __global__ void xMinDeltaIntegralReplicateFracKernel<true>(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
     const float *inData, const int inDataStrideRow, const int inDataStrideChannel);
 
-__global__ void yMaxDeltaIntegralFracKernel(
+__global__ void yMaxDeltaIntegralReplicateFracKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
@@ -1765,11 +1700,11 @@ __global__ void yMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        *tmpArray *= delta;
+        *tmpArray = delta;
     }
 }
 
-__global__ void yMinDeltaIntegralFracKernel(
+__global__ void yMinDeltaIntegralReplicateFracKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
@@ -1839,17 +1774,12 @@ __global__ void yMinDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt-1, w))];
 
         delta *= (y+yMinInt >= 1 and y+yMinInt < w);
-        *tmpArray *= -delta;
+        *tmpArray = -delta;
     }
 }
 
-__global__ void doNothing() {
-    int k = 0;
-    while (k < 100) ++k;
-}
-
 extern "C"
-void backwardFracCuda(THCState *state, const int paramId, const bool inputIsOnes,
+void backwardReplicateFracCuda(THCState *state, const int paramId, const bool inputIsOnes,
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin, const float *yMax,
@@ -1868,37 +1798,35 @@ void backwardFracCuda(THCState *state, const int paramId, const bool inputIsOnes
     const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
     const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
-    doNothing <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> ();
-
     switch (paramId) {
     case 0:
         if (inputIsOnes)
-        xMinDeltaIntegralFracKernel <true> <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        xMinDeltaIntegralReplicateFracKernel <true> <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, yMin, yMax,
             inData, inDataStrideRow, inDataStrideChannel);
         else
-        xMinDeltaIntegralFracKernel <false> <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        xMinDeltaIntegralReplicateFracKernel <false> <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, yMin, yMax,
             inData, inDataStrideRow, inDataStrideChannel);
             break;
     case 1:
-        xMaxDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        xMaxDeltaIntegralReplicateFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMax, yMin, yMax,
             inData, inDataStrideRow, inDataStrideChannel); break;
     case 2:
-        yMinDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        yMinDeltaIntegralReplicateFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin,
             inData, inDataStrideRow, inDataStrideChannel); break;
     case 3:
-        yMaxDeltaIntegralFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        yMaxDeltaIntegralReplicateFracKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMax,
@@ -1907,7 +1835,7 @@ void backwardFracCuda(THCState *state, const int paramId, const bool inputIsOnes
     THCudaCheck(cudaGetLastError());
 }
 
-__global__ void xMaxDeltaIntegralKernel(
+__global__ void xMaxDeltaIntegralReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax) {
@@ -1948,11 +1876,11 @@ __global__ void xMaxDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        *tmpArray *= delta;
+        *tmpArray = delta;
     }
 }
 
-__global__ void xMinDeltaIntegralKernel(
+__global__ void xMinDeltaIntegralReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax) {
@@ -1993,11 +1921,11 @@ __global__ void xMinDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMinInt >= 1 and x+xMinInt < h);
-        *tmpArray *= -delta;
+        *tmpArray = -delta;
     }
 }
 
-__global__ void yMaxDeltaIntegralKernel(
+__global__ void yMaxDeltaIntegralReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax) {
@@ -2038,11 +1966,11 @@ __global__ void yMaxDeltaIntegralKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        *tmpArray *= delta;
+        *tmpArray = delta;
     }
 }
 
-__global__ void yMinDeltaIntegralKernel(
+__global__ void yMinDeltaIntegralReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin) {
@@ -2083,12 +2011,12 @@ __global__ void yMinDeltaIntegralKernel(
                   + max(0,min(y+yMinInt-1, w))];
 
         delta *= (y+yMinInt >= 1 and y+yMinInt < w);
-        *tmpArray *= -delta;
+        *tmpArray = -delta;
     }
 }
 
 extern "C"
-void backwardCuda(THCState *state, const int paramId,
+void backwardReplicateCuda(THCState *state, const int paramId,
     const float *intData, const int intDataStrideChannel, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin, const float *yMax,
@@ -2108,22 +2036,22 @@ void backwardCuda(THCState *state, const int paramId,
 
     switch (paramId) {
     case 0:
-        xMinDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        xMinDeltaIntegralReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, yMin, yMax); break;
     case 1:
-        xMaxDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        xMaxDeltaIntegralReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMax, yMin, yMax); break;
     case 2:
-        yMinDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        yMinDeltaIntegralReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMin); break;
     case 3:
-        yMaxDeltaIntegralKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        yMaxDeltaIntegralReplicateKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
             intData, intDataStrideChannel, tmpArray,
             batchSize, nInputPlane, nWindows, h, w,
             xMin, xMax, yMax); break;

@@ -4,12 +4,12 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralSmartNorm'
 
 local seed = os.time()
--- seed = 1522690711
+seed = 1522690711
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local targetParam = 'xMin'
-print('The parameter to test is ' .. targetParam)
+local targetParam = 'yMax'
+-- print('The parameter to test is ' .. targetParam)
 local targetParamGrad = 'grad' .. targetParam:sub(1,1):upper() .. targetParam:sub(2,-1)
 
 local CUDA = true
@@ -22,10 +22,10 @@ end
 for iter = 1,(arg[1] or 1) do
 
 batchSize = 2
-h,w = math.random(2, 50), math.random(2, 50)
+h,w = math.random(2, 15), math.random(2, 15)
 strideH, strideW = 1,1
-print('h, w = ' .. h .. ', ' .. w)
-print('stride = ' .. strideH .. ', ' .. strideW)
+-- print('h, w = ' .. h .. ', ' .. w)
+-- print('stride = ' .. strideH .. ', ' .. strideW)
 
 local function applyStride(k, stride)
     return math.ceil(k / stride)
@@ -34,7 +34,6 @@ end
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
 int.exact = true
-int.smart = true
 int.replicate = true
 int.normalize = false
 int.saveMemoryIntegral = false
@@ -43,11 +42,10 @@ int.saveMemoryAccGradParameters = false
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
--- img[2]:copy(img[1])
 target = torch.rand(batchSize, int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):mul(2):add(-1):type(dtype)
 
 local paramPlane, paramWin = math.random(1,int.nInputPlane), math.random(1,int.nWindows)
-print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)
+-- print('paramPlane, paramWin = ' .. paramPlane .. ', ' .. paramWin)
 
 local function rand(a,b)
     return torch.rand(1)[1] * (b-a) + a
@@ -63,11 +61,11 @@ for planeIdx = 1,int.nInputPlane do
         int.yMin[planeIdx][winIdx] = yMin
         int.yMax[planeIdx][winIdx] = yMax
 
-        print('int.xMin[' .. planeIdx .. '][' .. winIdx .. '] = ' .. xMin)
-        print('int.xMax[' .. planeIdx .. '][' .. winIdx .. '] = ' .. xMax)
-        print('int.yMin[' .. planeIdx .. '][' .. winIdx .. '] = ' .. yMin)
-        print('int.yMax[' .. planeIdx .. '][' .. winIdx .. '] = ' .. yMax)
-        print('')
+        -- print('int.xMin[' .. planeIdx .. '][' .. winIdx .. '] = ' .. xMin)
+        -- print('int.xMax[' .. planeIdx .. '][' .. winIdx .. '] = ' .. xMax)
+        -- print('int.yMin[' .. planeIdx .. '][' .. winIdx .. '] = ' .. yMin)
+        -- print('int.yMax[' .. planeIdx .. '][' .. winIdx .. '] = ' .. yMax)
+        -- print('')
     end
 end
 int:_reparametrize(false)
@@ -84,7 +82,8 @@ int:forward(img)
 for _,param in ipairs{'xMin', 'xMax', 'yMin', 'yMax'} do
     -- assert(paramsBefore[param] == tonumber(ffi.new('float', int[param][paramPlane][paramWin])),
     assert(math.abs(paramsBefore[param] - int[param][paramPlane][paramWin]) < 1e-6,
-        param .. ' was changed: ' .. paramsBefore[param]*int.reparametrization .. ' became ' .. int[param][paramPlane][paramWin]*int.reparametrization)
+        param .. ' was changed: ' .. paramsBefore[param]*int.reparametrization .. 
+        ' became '.. int[param][paramPlane][paramWin]*int.reparametrization)
 end
 
 target:add(int.output)
@@ -94,7 +93,6 @@ gradOutput = crit:updateGradInput(int.output, target)
 
 int:zeroGradParameters()
 int:backward(img, gradOutput)
--- do return end
 
 params = {}
 loss = {}
@@ -131,7 +129,6 @@ for param = lowerLimit,upperLimit,step do
     local dirtyFixWindowsFired = math.abs(int[targetParam][paramPlane][paramWin] - param) > 1e-6
     int:_reparametrize(false)
     
----[[
     if not dirtyFixWindowsFired then
         params[k] = param
         loss[k] = crit:forward(pred, target)
@@ -155,15 +152,10 @@ for param = lowerLimit,upperLimit,step do
         
         k = k + 1
     end
-    --]]
 end
 if CUDA then cutorch.synchronize() end
 print(timer:time().real .. ' seconds')
 
--- loss[#loss] = nil
--- params[#params] = nil
--- derivM[#derivM] = nil
----[[
 require 'gnuplot'
 
 gnuplot.figure(iter)
@@ -180,7 +172,7 @@ gnuplot.plot(
 )
 
 gnuplot.grid(true)
---]]
+
 end -- if
 end -- for
 

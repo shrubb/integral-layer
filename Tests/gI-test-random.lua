@@ -1,15 +1,15 @@
 require 'torch'
 torch.setdefaulttensortype('torch.FloatTensor')
 
-require 'IntegralSmartNorm'
+require 'IntegralZeroPadding'
 
 local seed = os.time()
-seed = 1515082363
+-- seed = 1524148367
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'border' -- 'corner' | 'border' | 'inner'
+local testType = 'inner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -21,7 +21,7 @@ for iter = 1,(arg[1] or 1) do
 
 strideH, strideW = 1, 1
 batchSize = 2
-h,w = math.random(1+strideH, 50), math.random(1+strideW, 50)
+h,w = math.random(1+strideH, 40), math.random(1+strideW, 40)
 print('h, w = ' .. h .. ', ' .. w)
 print('stride = ' .. strideH .. ', ' .. strideW)
 
@@ -32,8 +32,7 @@ end
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 
 int.exact = true
-int.smart = true
-int.replicate = true
+int.replicate = false
 int.normalize = true
 int.saveMemoryIntegralInput = false
 int.saveMemoryIntegralGradOutput = false
@@ -64,9 +63,6 @@ crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
 target = torch.rand(batchSize, int.nInputPlane*int.nWindows, applyStride(h,strideH), applyStride(w,strideW)):add(-0.5):mul(0.1):type(dtype)
-
--- img = nn.utils.addSingletonDimension(img)
--- target = nn.utils.addSingletonDimension(target)
 
 local function rand(a,b)
 	return torch.rand(1)[1] * (b-a) + a
@@ -136,10 +132,6 @@ for param = -5,5,step do
     k = k + 1
 end
 
--- loss[#loss] = nil
--- params[#params] = nil
--- derivM[#derivM] = nil
--- 
 require 'gnuplot'
 
 gnuplot.figure(iter)

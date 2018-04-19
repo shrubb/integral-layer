@@ -736,7 +736,7 @@ void updateGradInputPlanewiseCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputPlanewiseCuda(
+        strided::updateGradInputReplicatePlanewiseCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;
@@ -761,7 +761,7 @@ void updateGradInputPlanewiseFracCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::updateGradInputPlanewiseFracCuda(
+        strided::updateGradInputReplicatePlanewiseFracCuda(
             gradOutputIntData, gradInputData, h, w, nWindows,
             xMin, xMax, yMin, yMax,
             gradOutputData, gradOutputStrideRow, gradOutputStrideChannel,
@@ -861,7 +861,7 @@ __global__ void xMaxDeltaIntegralFracKernel(
                       + max(0,min(y+yMinInt, w))];
 
             delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-            tmpArray[(x-1)*w + (y-1)] *= delta;
+            tmpArray[(x-1)*w + (y-1)] = delta;
         }
     }
 }
@@ -1027,7 +1027,7 @@ __global__ void yMaxDeltaIntegralFracKernel(
                       + max(0,min(y+yMaxInt  , w))];
 
             delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-            tmpArray[(x-1)*w + (y-1)] *= delta;
+            tmpArray[(x-1)*w + (y-1)] = delta;
         }
     }
 }
@@ -1123,7 +1123,7 @@ void backwardFracCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::backwardFracCuda(
+        strided::backwardReplicateFracCuda(
             intData, tmpArray, nWindows, h, w,
             xMin, xMax, yMin, yMax, inData, inDataStrideRow,
             strideH, strideW);
@@ -1185,7 +1185,7 @@ __global__ void xMaxDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[(x-1)*w + (y-1)] = delta;
     }
 }
 
@@ -1263,7 +1263,7 @@ __global__ void yMaxDeltaIntegralKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        tmpArray[(x-1)*w + (y-1)] *= delta;
+        tmpArray[(x-1)*w + (y-1)] = delta;
     }
 }
 
@@ -1313,7 +1313,7 @@ void backwardCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        strided::backwardCuda(
+        strided::backwardReplicateCuda(
             intData, tmpArray, nWindows, h, w,
             xMin, xMax, yMin, yMax, strideH, strideW);
         return;

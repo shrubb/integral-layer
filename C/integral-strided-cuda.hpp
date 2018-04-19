@@ -15,14 +15,14 @@ void forwardNoNormReplicateFracCuda(THCState *state,
     const float *inData, const int inDataStrideRow, const int inDataStrideChannel,
     const int strideH, const int strideW);
 
-void updateGradInputPlanewiseCuda(
+void updateGradInputReplicatePlanewiseCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
     const float * const yMin, const float * const yMax,
     const int strideH, const int strideW);
 
-void updateGradInputPlanewiseFracCuda(
+void updateGradInputReplicatePlanewiseFracCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float *xMin, const float *xMax, const float *yMin, float *yMax,
@@ -30,7 +30,7 @@ void updateGradInputPlanewiseFracCuda(
     const int gradOutputStrideChannel,
     const int strideH, const int strideW);
 
-void backwardFracCuda(
+void backwardReplicateFracCuda(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float * const xMin, const float * const xMax,
@@ -38,7 +38,7 @@ void backwardFracCuda(
     const float *inData, const int inDataStrideRow,
     const int strideH, const int strideW);
 
-void backwardCuda(
+void backwardReplicateCuda(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float * const xMin, const float * const xMax,

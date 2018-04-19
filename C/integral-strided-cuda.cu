@@ -75,37 +75,6 @@ int modFloor(const int x, const int y) {
     return x >= 0 ? x % y : (y + x % y);
 }
 
-__global__ void forwardKernel(
-    float *intData, float *outData, int h, int w, int nWindows,
-    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
-
-    int x = BLOCK_SIZE * blockIdx.x + threadIdx.x;
-    int y = BLOCK_SIZE * blockIdx.y + threadIdx.y;
-    int z = BLOCK_CHANNELS * blockIdx.z + threadIdx.z;
-
-    if (x < h and y < w and z < nWindows) {
-
-        // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
-        // `integral()` behavior. Namely, I(x,0) and I(0,y) are
-        // always 0 (so it's a C-style array sum).
-
-        // However, when computing sums, we subtract values at indices 
-        // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
-        // and yMin, and thus finally they are not affected.
-
-        int t = max(0, min(x+(int)ceil (xMin[z]  ), h) );
-        int b = max(0, min(x+(int)floor(xMax[z]+1), h) );
-        int l = max(0, min(y+(int)ceil (yMin[z]  ), w) );
-        int r = max(0, min(y+(int)floor(yMax[z]+1), w) );
-
-        outData[z*w*h + x*w + y] = areaCoeff[z] *
-            ( intData[b*(w+1) + r]
-            - intData[t*(w+1) + r]
-            - intData[b*(w+1) + l]
-            + intData[t*(w+1) + l]);
-    }
-}
-
 __global__ void forwardNoNormReplicateKernel(
     const float *intData, const int intDataStrideChannel, float *outData,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
@@ -298,17 +267,6 @@ __global__ void forwardNoNormReplicateFracKernel(
     }
 }
 
-
-void forwardCuda(
-    float *intData, int h, int w, int nWindows, float *outData,
-    float *xMin, float *xMax, float *yMin, float *yMax, float *areaCoeff) {
-
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_CHANNELS);
-    dim3 dimGrid((h + dimBlock.x - 1) / dimBlock.x, (w + dimBlock.y - 1) / dimBlock.y, (nWindows + dimBlock.z - 1) / dimBlock.z);
-
-    forwardKernel <<<dimGrid, dimBlock>>> (intData, outData, h, w, nWindows, xMin, xMax, yMin, yMax, areaCoeff);
-}
-
 void forwardNoNormReplicateCuda(THCState *state,
     const float *intData, const int intDataStrideChannel, float *outData,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
@@ -357,7 +315,7 @@ void forwardNoNormReplicateFracCuda(THCState *state,
 
 /************************ updateGradInput ************************/
 
-__global__ void updateGradInputPlanewiseKernel(
+__global__ void updateGradInputReplicatePlanewiseKernel(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -420,7 +378,7 @@ __global__ void updateGradInputPlanewiseKernel(
     }
 }
 
-__global__ void updateGradInputPlanewiseFracKernel(
+__global__ void updateGradInputReplicatePlanewiseFracKernel(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -569,7 +527,7 @@ __global__ void updateGradInputPlanewiseFracKernel(
     }
 }
 
-void updateGradInputPlanewiseCuda(
+void updateGradInputReplicatePlanewiseCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float * const xMin, const float * const xMax,
@@ -581,14 +539,14 @@ void updateGradInputPlanewiseCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputPlanewiseKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputReplicatePlanewiseKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
         strideH, strideW);
 }
 
-void updateGradInputPlanewiseFracCuda(
+void updateGradInputReplicatePlanewiseFracCuda(
     const float *gradOutputIntData, float * const gradInputData,
     const int h, const int w, const int nWindows,
     const float *xMin, const float *xMax, const float *yMin, float *yMax,
@@ -601,7 +559,7 @@ void updateGradInputPlanewiseFracCuda(
         (h + dimBlock.x - 1) / dimBlock.x, 
         (w + dimBlock.y - 1) / dimBlock.y);
 
-    updateGradInputPlanewiseFracKernel <<<dimGrid, dimBlock>>> (
+    updateGradInputReplicatePlanewiseFracKernel <<<dimGrid, dimBlock>>> (
         gradOutputIntData, gradInputData,
         h, w, nWindows,
         xMin, xMax, yMin, yMax,
@@ -611,7 +569,7 @@ void updateGradInputPlanewiseFracCuda(
 
 /************************ accGradParameters ************************/
 
-__global__ void xMaxDeltaIntegralFracKernel(
+__global__ void xMaxDeltaIntegralReplicateFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
@@ -682,11 +640,11 @@ __global__ void xMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        tmpArray[xOut*wOut + yOut] *= delta;
+        tmpArray[xOut*wOut + yOut] = delta;
     }
 }
 
-__global__ void xMinDeltaIntegralFracKernel(
+__global__ void xMinDeltaIntegralReplicateFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
@@ -761,7 +719,7 @@ __global__ void xMinDeltaIntegralFracKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralFracKernel(
+__global__ void yMaxDeltaIntegralReplicateFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
@@ -832,11 +790,11 @@ __global__ void yMaxDeltaIntegralFracKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        tmpArray[xOut*wOut + yOut] *= delta;
+        tmpArray[xOut*wOut + yOut] = delta;
     }
 }
 
-__global__ void yMinDeltaIntegralFracKernel(
+__global__ void yMinDeltaIntegralReplicateFracKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
@@ -911,7 +869,7 @@ __global__ void yMinDeltaIntegralFracKernel(
     }
 }
 
-void backwardFracCuda(
+void backwardReplicateFracCuda(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float * const xMin, const float * const xMax,
@@ -925,24 +883,24 @@ void backwardFracCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * hOut * wOut + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 0*nWindows*hOut*wOut, nWindows, h, w,
         xMax, yMin, yMax, inData, inDataStrideRow, strideH, strideW);
 
-    xMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 1*nWindows*hOut*wOut, nWindows, h, w,
         xMin, yMin, yMax, inData, inDataStrideRow, strideH, strideW);
 
-    yMaxDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 2*nWindows*hOut*wOut, nWindows, h, w,
         xMin, xMax, yMax, inData, inDataStrideRow, strideH, strideW);
 
-    yMinDeltaIntegralFracKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralReplicateFracKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 3*nWindows*hOut*wOut, nWindows, h, w,
         xMin, xMax, yMin, inData, inDataStrideRow, strideH, strideW);
 }
 
-__global__ void xMaxDeltaIntegralKernel(
+__global__ void xMaxDeltaIntegralReplicateKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMax, const float *yMin, const float *yMax,
@@ -985,11 +943,11 @@ __global__ void xMaxDeltaIntegralKernel(
                   + max(0,min(y+yMinInt, w))];
 
         delta *= (x+xMaxInt >= 1 and x+xMaxInt < h);
-        tmpArray[xOut*wOut + yOut] *= delta;
+        tmpArray[xOut*wOut + yOut] = delta;
     }
 }
 
-__global__ void xMinDeltaIntegralKernel(
+__global__ void xMinDeltaIntegralReplicateKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *yMin, const float *yMax,
@@ -1036,7 +994,7 @@ __global__ void xMinDeltaIntegralKernel(
     }
 }
 
-__global__ void yMaxDeltaIntegralKernel(
+__global__ void yMaxDeltaIntegralReplicateKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMax,
@@ -1079,11 +1037,11 @@ __global__ void yMaxDeltaIntegralKernel(
                   + max(0,min(y+yMaxInt  , w))];
 
         delta *= (y+yMaxInt >= 1 and y+yMaxInt < w);
-        tmpArray[xOut*wOut + yOut] *= delta;
+        tmpArray[xOut*wOut + yOut] = delta;
     }
 }
 
-__global__ void yMinDeltaIntegralKernel(
+__global__ void yMinDeltaIntegralReplicateKernel(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float *xMin, const float *xMax, const float *yMin,
@@ -1130,7 +1088,7 @@ __global__ void yMinDeltaIntegralKernel(
     }
 }
 
-void backwardCuda(
+void backwardReplicateCuda(
     const float *intData, float *tmpArray,
     const int nWindows, const int h, const int w,
     const float * const xMin, const float * const xMax,
@@ -1143,19 +1101,19 @@ void backwardCuda(
     dim3 dimBlock(BLOCK_SIZE * BLOCK_SIZE);
     dim3 dimGrid((nWindows * hOut * wOut + dimBlock.x - 1) / dimBlock.x);
 
-    xMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMaxDeltaIntegralReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 0*nWindows*hOut*wOut,
         nWindows, h, w, xMax, yMin, yMax, strideH, strideW);
 
-    xMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    xMinDeltaIntegralReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 1*nWindows*hOut*wOut,
         nWindows, h, w, xMin, yMin, yMax, strideH, strideW);
 
-    yMaxDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMaxDeltaIntegralReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 2*nWindows*hOut*wOut,
         nWindows, h, w, xMin, xMax, yMax, strideH, strideW);
 
-    yMinDeltaIntegralKernel <<<dimGrid, dimBlock>>> (
+    yMinDeltaIntegralReplicateKernel <<<dimGrid, dimBlock>>> (
         intData, tmpArray + 3*nWindows*hOut*wOut,
         nWindows, h, w, xMin, xMax, yMin, strideH, strideW);
 }
