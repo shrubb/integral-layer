@@ -275,7 +275,7 @@ do
         -- specifies how to treat pixels outside of the image
         -- if true, acts like `BORDER_MODE_REPLICATE` in OpenCV
         -- if false, treats those pixels as zeros (`BORDER_MODE_CONSTANT` with a value of 0)
-        self.replicate = true
+        self.replicate = false
         -- if true, compute integral images for each batch sample one by one (a bit less memory usage but slower)
         -- if false, compute integral images in `:forward()` for all batch samples at once AND reuse them in `accGradParameters`
         self.saveMemoryIntegralInput = false
