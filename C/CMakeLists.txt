@@ -28,6 +28,7 @@ if (CUDA_FOUND)
     cuda_add_library(integral-cuda SHARED integral-cuda.cu integral-zp-cuda.cu integral-strided-cuda.cu)
     cuda_add_library(integral-varscale-cuda SHARED integral-varscale-cuda.cu)
     cuda_add_library(integral-toborder-cuda SHARED integral-toborder-cuda.cu)
+    cuda_add_library(flip-cuda SHARED flip.cu)
     
     cuda_add_cublas_to_target(integral-cuda)
     cuda_add_cublas_to_target(integral-toborder-cuda)

@@ -1,10 +1,12 @@
-require 'IntegralSmartNorm'
+-- require 'IntegralSmartNorm'
+require 'IntegralZeroPadding'
 
 int = IntegralSmartNorm(32, 8, 128, 64):cuda()
 
 -- require 'cunn'
 -- int = nn.SpatialConvolution(32, 32*8, 3,3, 1,1, 1,1):cuda()
 
+int.replicate = false
 int.normalize = true
 int.exact = true
 int.saveMemoryIntegralInput = false
@@ -62,6 +64,11 @@ print('Time for 1 accGradParameters: ' .. (timer:time().real / nRepeats))
 -- Time for 1 forward: 0.047959033648173
 -- Time for 1 updateGradInput: 0.030379867553711
 -- Time for 1 accGradParameters: 0.1229078690211
+
+-- Int, 32->8 (exact, zero padding, normalize=true)
+-- Time for 1 forward: 0.031330068906148
+-- Time for 1 updateGradInput: 0.04389230410258
+-- Time for 1 accGradParameters: 0.083866302172343
 
 -- Conv 3x3, 32->32*8
 -- 617 MB

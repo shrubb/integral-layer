@@ -110,7 +110,7 @@ for iter = 1,2 do
         if iter == 1 then
             totalOps = totalOps + currentOps
 
-            if not kind:find('BatchNorm') then
+            if not torch.isTypeOf(module, nn.Container) and not kind:find('BatchNorm') then
                 for _,w in ipairs(module:parameters() or {}) do
                     paramsCount = paramsCount + w:nElement()
                 end

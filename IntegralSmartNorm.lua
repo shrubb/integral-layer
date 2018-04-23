@@ -1495,3 +1495,80 @@ do
         self.yMax:add(lr, self.gradYMax)
     end
 end
+
+require 'Flip'
+local _, parent = torch.class('IntegralSymmetric', 'nn.Module')
+
+do
+    function IntegralSymmetric:__init(nInputPlane, nWindows, h, w, strideH, strideW)
+        self.nInputPlane, self.nWindows = nInputPlane, nWindows
+        self.h, self.w, self.strideH, self.strideW = h, w, strideH, strideW
+
+        self.intIdentity = IntegralSmartNorm(nInputPlane, nWindows, h, w, strideH, strideW)
+        self.intFlipped  = self.intIdentity:clone()
+        self.flip = nn.Flip():accumulateGradInput(true)
+        self.cmax = nn.CMaxTable()
+
+        self:type(torch.getdefaulttensortype())
+
+        self._backwardDone = false -- do we need to to `self.cmax:updateGradInput()`?
+    end
+
+    function IntegralSymmetric:type(type, tensorCache)
+        parent.type(self, type, tensorCache)
+
+        local paramNames = {
+            'xMin', 'xMax', 'yMin', 'yMax',
+            'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax'}
+
+        self.intIdentity:share(self.intFlipped, table.unpack(paramNames))
+        for _, paramName in ipairs(paramNames) do
+            self[paramName] = self.intFlipped[paramName]
+        end
+
+        self.flip.gradInput = self.intIdentity.gradInput
+        return self
+    end
+
+    function IntegralSymmetric:updateOutput(input)
+        self._backwardDone = false
+
+        self.cmax:forward{
+            self.intIdentity:forward(input),
+            self.intFlipped:forward(self.flip:forward(input))
+        }
+
+        self.output = self.cmax.output
+        return self.output
+    end
+
+    function IntegralSymmetric:updateGradInput(input, gradOutput)
+        self.cmax:updateGradInput({self.intIdentity.output, self.intFlipped.output}, gradOutput)
+        self.intFlipped:updateGradInput(self.flip.output, self.cmax.gradInput[2])
+        
+        self.intIdentity:updateGradInput(input, self.cmax.gradInput[1])
+        -- accumulate gradInput to `self.intIdentity.gradInput`
+        self.flip:updateGradInput(input, self.intFlipped.gradInput)
+
+        self.gradInput = self.intIdentity.gradInput
+        self._backwardDone = true
+        return self.gradInput
+    end
+
+    function IntegralSymmetric:accGradParameters(input, gradOutput)
+        if not self._backwardDone then
+            self.cmax:updateGradInput(
+                {self.intIdentity.output, self.intFlipped.output}, gradOutput)
+        end
+
+        self.intIdentity:accGradParameters(input, self.cmax.gradInput[1])
+        self.intFlipped:accGradParameters(self.flip.output, self.cmax.gradInput[2])
+    end
+
+    function IntegralSymmetric:zeroGradParameters()
+        self.gradXMin:zero()
+        self.gradYMin:zero()
+        self.gradXMax:zero()
+        self.gradYMax:zero()
+    end
+end
