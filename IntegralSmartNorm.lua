@@ -1565,6 +1565,16 @@ do
         self.intFlipped:accGradParameters(self.flip.output, self.cmax.gradInput[2])
     end
 
+    function IntegralSymmetric:reset()
+        self.intIdentity:reset()
+    end
+
+    function IntegralSmartNorm:parameters()
+        local params = {self.xMin, self.xMax, self.yMin, self.yMax}
+        local gradParams = {self.gradXMin, self.gradXMax, self.gradYMin, self.gradYMax}
+        return params, gradParams
+    end
+
     function IntegralSymmetric:zeroGradParameters()
         self.gradXMin:zero()
         self.gradYMin:zero()
