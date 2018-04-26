@@ -1554,9 +1554,13 @@ do
         self.intIdentity:reset()
     end
 
-    function IntegralSmartNorm:parameters()
-        local params = {self.xMin, self.xMax, self.yMin, self.yMax}
-        local gradParams = {self.gradXMin, self.gradXMax, self.gradYMin, self.gradYMax}
+    function IntegralSymmetric:parameters()
+        local params = {
+            self.intFlipped.xMin, self.intFlipped.xMax,
+            self.intFlipped.yMin, self.intFlipped.yMax}
+        local gradParams = {
+            self.intFlipped.gradXMin, self.intFlipped.gradXMax,
+            self.intFlipped.gradYMin, self.intFlipped.gradYMax}
         return params, gradParams
     end
 

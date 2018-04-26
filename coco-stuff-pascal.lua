@@ -14,7 +14,27 @@ dataset.nClasses = 21 -- all PASCAL VOC 2012 segmentation classes + "background"
 
 -- precomputed class frequencies
 dataset.classProbs = torch.FloatTensor {
-    ъ
+    0.0043220477268013,
+    0.0020987215202244,
+    0.0020858630336653,
+    0.0035373760958584,
+    0.0020328517319741,
+    0.0099920090565802,
+    0.0080248412006723,
+    0.0081511776939684,
+    0.0085582885561291,
+    0.0035301265201594,
+    0.0411748268623,
+    0.0059333851547132,
+    0.0047445264454333,
+    0.0064907405201876,
+    0.11959019917812,
+    0.0031072816502775,
+    0.0025029589748986,
+    0.0077598138855773,
+    0.010089911488045,
+    0.0046456479120634,
+    0.74162740479235,
 }
 -- dataset.classWeights = dataset.classProbs:clone():pow(-1/2.5)
 dataset.classWeights = dataset.classProbs:clone():add(1.10):log():pow(-1)
