@@ -46,10 +46,10 @@ function dataset.loadNames(kind)
     assert(dataset.relative:sub(-1, -1) == '/')
 
     local retval = {} 
-    local imageBase = dataset.relative .. kind .. '2017/'
-    local labelBase = dataset.relative .. 'annotations/stuff_' .. kind .. '2017_pixelmaps_nopalette/'
+    local imageBase = kind .. '2017/'
+    local labelBase = 'annotations/stuff_' .. kind .. '2017_pixelmaps_nopalette/'
     
-    for gtFile in paths.iterfiles(labelBase) do
+    for gtFile in paths.iterfiles(dataset.relative .. labelBase) do
         table.insert(retval, 
             {
                 image  = imageBase .. gtFile:gsub('png', 'jpg'),

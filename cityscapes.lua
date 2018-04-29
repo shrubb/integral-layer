@@ -53,18 +53,18 @@ function cityscapes.loadNames(kind, disparityOriginal)
     --]]
     
     local retval = {} 
-    local imageBase = cityscapes.relative .. 'leftImg8bit/' .. kind .. '/'
+    local imageBase = 'leftImg8bit/' .. kind .. '/'
 
     do
         assert(cityscapes.relative:sub(-1, -1) == '/')
-        local cities = paths.dir(imageBase)
-        print('Loading images from ' .. imageBase .. '. Example cities: ' .. 
+        local cities = paths.dir(cityscapes.relative .. imageBase)
+        print('Loading images from ' .. cityscapes.relative .. imageBase .. '. Example cities: ' .. 
             tostring(cities[1]) .. ', ' .. tostring(cities[2]))
     end
     
     -- iterate over cities
-    for city in paths.iterdirs(imageBase) do
-        for file in paths.iterfiles(imageBase .. city) do
+    for city in paths.iterdirs(cityscapes.relative .. imageBase) do
+        for file in paths.iterfiles(cityscapes.relative .. imageBase .. city) do
             local gtFile   = file:gsub('leftImg8bit', 'gtFine_labelIds')
             local dispFile = file:gsub('leftImg8bit', 'disparity')
             local dispFolder = disparityOriginal and 'disparityFixedOrig/' or 'disparityOur/'
