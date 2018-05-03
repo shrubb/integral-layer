@@ -63,6 +63,9 @@ void forwardNoNormFracCuda(struct THCState *state,
     float *inData, int inDataStrideRow, int inDataStrideChannel,
     const int strideH, const int strideW);
 
+void cmulWithArea(struct THCState *state,
+    float *output, float *area, int batchSize, int nParams, int hw);
+
 void updateGradInputCuda(struct THCState *state,
     const float *gradOutputIntData, float *tmpArray,
     const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
@@ -884,7 +887,15 @@ do
 
         if self.normalize then
             -- divide by area
-            self.output:cmul(self:_computeArea(true):view(1, -1, 1, 1):expandAs(self.output))
+
+            -- cutorch's kernelPointwiseApply2 is slow on non-contiguous tensors :(
+            -- self.output:cmul(self:_computeArea(true):view(1, -1, 1, 1):expandAs(self.output))
+
+            -- we'll do it manually
+            local area = self:_computeArea(true)
+            CUDA_lib.cmulWithArea(cutorch.getState(),
+                self.output:data(), area:data(),
+                batchSize, self.xMin:nElement(), self.hOut*self.wOut)
         end
         
         self._backwardDone = false
@@ -1043,9 +1054,14 @@ do
 
                     -- temporary solution, could be faster
                     if self.normalize then
-                        tmpArrayGPUBegin:cmul(self:_computeArea(true)
-                            :view(1, self.nInputPlane, self.nWindows, 1, 1)
-                            :expandAs(tmpArrayGPUBegin))
+                        -- tmpArrayGPUBegin:cmul(self:_computeArea(true)
+                        --     :view(1, self.nInputPlane, self.nWindows, 1, 1)
+                        --     :expandAs(tmpArrayGPUBegin))
+
+                        local area = self:_computeArea(true)
+                        CUDA_lib.cmulWithArea(cutorch.getState(),
+                            tmpArrayGPUBegin:data(), area:data(),
+                            batchSize, self.xMin:nElement(), self.h*self.w)
                     end
 
                     torch.sum(self.gradInput, tmpArrayGPUBegin, 3)

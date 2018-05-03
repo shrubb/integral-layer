@@ -258,6 +258,30 @@ void forwardNoNormFracCuda(THCState *state,
     THCudaCheck(cudaGetLastError());
 }
 
+__global__ void cmulWithAreaKernel(float *output, float *area, int batchSize, int nParams, int hw) {
+    int id = NUM_THREADS * blockIdx.x + threadIdx.x;
+    output += id; // outData now points to our output pixel
+
+    id /= hw;
+    const int paramIdx = id % nParams;
+
+    if (id < batchSize * nParams) {
+        *output *= area[paramIdx];
+    }
+}
+
+extern "C"
+void cmulWithArea(THCState *state,
+    float *output, float *area, int batchSize, int nParams, int hw) {
+
+    const int threadsNeeded = batchSize * nParams * hw;
+    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+
+    cmulWithAreaKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
+        output, area, batchSize, nParams, hw);
+    THCudaCheck(cudaGetLastError());
+}
+
 /************************ updateGradInput ************************/
 
 __global__ void updateGradInputKernel(
