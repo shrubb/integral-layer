@@ -9,7 +9,7 @@
 
 #include <THC/THC.h>
 
-#define NUM_THREADS 256
+#define NUM_THREADS 1024
 
 using std::max;
 using std::min;
