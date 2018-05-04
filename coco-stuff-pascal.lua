@@ -38,8 +38,8 @@ dataset.classProbs = torch.FloatTensor {
 }
 -- dataset.classWeights = dataset.classProbs:clone():pow(-1/2.5)
 dataset.classWeights = dataset.classProbs:clone():add(1.10):log():pow(-1)
--- do NOT add "unlabeled" class with zero weight
--- dataset.classWeights = torch.cat(dataset.classWeights, torch.FloatTensor{0})
+-- add "unlabeled" class with zero weight
+dataset.classWeights = torch.cat(dataset.classWeights, torch.FloatTensor{0})
 
 function dataset.loadNames(kind)
     --[[
@@ -148,6 +148,7 @@ function dataset.loadSample(files, crop)
         labels = cv.resize{labels, dataset.dsize, interpolation=cv.INTER_NEAREST}
     end
 
+    cv.cvtColor{img, img, cv.COLOR_BGR2RGB}
     img = img:permute(3,1,2):float()
     -- normalize image globally
     for ch = 1,3 do
