@@ -235,8 +235,9 @@ function dataset.calcClassProbs(files)
 end
 
 function dataset.labelsToEval(labels)
-    error('NYI')
-    return labels + 91
+    local retval = labels:clone()
+    retval[retval:eq(21)] = 0
+    return retval
 end
 
 ffi = require 'ffi'
