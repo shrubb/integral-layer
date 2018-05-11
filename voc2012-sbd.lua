@@ -105,15 +105,42 @@ function dataset.calcStd(files, mean)
 end
 
 -- `crop`: false/nil, 'random' or 'center'
-function dataset.loadSample(files, crop)
+function dataset.loadSample(files, crop, augment)
     local imagePath  = dataset.relative .. files.image
     local labelsPath = dataset.relative .. files.labels
 
     -- load labels
     local labels = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
-
-    -- load image
     local img = cv.imread{imagePath, cv.IMREAD_COLOR}
+
+    if augment then
+        local flip = torch.random(2) == 1
+        local maybeFlipMatrix = torch.eye(3):double()
+        if flip then
+            maybeFlipMatrix[{1,1}] = -1
+            maybeFlipMatrix[{1,3}] = labels:size(2)
+        end
+        
+        local angle = (math.random() * 2 - 1) * 10
+        local scaleFactor = math.random() * 1.5 + 0.5
+        local imageCenter = {labels:size(2) / 2, labels:size(1) / 2}
+        local rotationMatrix = torch.eye(3):double()
+        rotationMatrix[{{1,2}}]:copy(cv.getRotationMatrix2D{imageCenter, angle, scaleFactor})
+        
+        local transformationMatrix = torch.mm(maybeFlipMatrix, rotationMatrix)[{{1,2}}]
+        
+        img = cv.warpAffine{
+            img, transformationMatrix, flags=cv.INTER_LINEAR,
+            borderMode=cv.BORDER_REFLECT, borderValue={nClasses+1}}
+        labels = cv.warpAffine{
+            labels, transformationMatrix, flags=cv.INTER_NEAREST,
+            borderMode=cv.BORDER_CONSTANT, borderValue={nClasses+1}}
+        
+        if torch.random(2) == 1 then
+            local blurSigma = math.random() * 2.3 + 0.7
+            cv.GaussianBlur{img, {5, 5}, blurSigma, dst=img, borderType=cv.BORDER_REFLECT}
+        end
+    end
 
     if crop then
         -- determine crop boundaries
