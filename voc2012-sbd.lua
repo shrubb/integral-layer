@@ -121,7 +121,7 @@ function dataset.loadSample(files, crop, augment)
             maybeFlipMatrix[{1,3}] = labels:size(2)
         end
         
-        local angle = (math.random() * 2 - 1) * 10
+        local angle = (math.random() * 2 - 1) * 4.5
         local scaleFactor = math.random() * 1.5 + 0.5
         local imageCenter = {labels:size(2) / 2, labels:size(1) / 2}
         local rotationMatrix = torch.eye(3):double()
