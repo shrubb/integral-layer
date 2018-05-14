@@ -9,7 +9,7 @@ local cityscapes = {}
 
 cityscapes.mean = torch.FloatTensor{0.3621072769165, 0.38127624988556, 0.45571011304855} * 255
 cityscapes.std  = torch.FloatTensor{0.28512728214264, 0.27228525280952, 0.27148124575615} * 255
-cityscapes.dsize = {560, 425}
+cityscapes.dsize = {560, 424}
 cityscapes.nClasses = 40
 -- precomputed class frequencies
 cityscapes.classProbs = torch.FloatTensor {
@@ -220,14 +220,15 @@ function cityscapes.loadSample(idx, _, augment)
     local labelsPath = cityscapes.relative .. ('groundTruthPng/labels_%04d.png'):format(idx)
 
     -- load image
-    local img = cv.imread{imagePath, cv.IMREAD_COLOR}
+    local img = cv.imread{imagePath, cv.IMREAD_COLOR}[{{1,-2}}]
     if img:size(1) ~= cityscapes.dsize[2] or 
        img:size(2) ~= cityscapes.dsize[1] then
         img = cv.resize{img, cityscapes.dsize, interpolation=cv.INTER_CUBIC}
     end
 
     -- load labels
-    local labels = cv.imread{labelsPath, cv.IMREAD_GRAYSCALE}
+    local labels = cv.imread{labelsPath, cv.IMREAD_ANYCOLOR}[{{1,-2}}]
+    assert(labels:nDimension() == 2)
     if labels:size(1) ~= cityscapes.dsize[2] or
        labels:size(2) ~= cityscapes.dsize[1] then
         labels = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
