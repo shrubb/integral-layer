@@ -7,8 +7,8 @@ require 'cv.imgproc'
 
 local cityscapes = {}
 
-cityscapes.mean = torch.FloatTensor{0.3621072769165, 0.38127624988556, 0.45571011304855}
-cityscapes.std  = torch.FloatTensor{0.28512728214264, 0.27228525280952, 0.27148124575615}
+cityscapes.mean = torch.FloatTensor{0.3621072769165, 0.38127624988556, 0.45571011304855} * 255
+cityscapes.std  = torch.FloatTensor{0.28512728214264, 0.27228525280952, 0.27148124575615} * 255
 cityscapes.dsize = {560, 425}
 cityscapes.nClasses = 40
 -- precomputed class frequencies
@@ -56,6 +56,8 @@ cityscapes.classProbs = torch.FloatTensor {
 }
 -- cityscapes.classWeights = cityscapes.classProbs:clone():pow(-1/2.5)
 cityscapes.classWeights = cityscapes.classProbs:clone():add(1.10):log():pow(-1)
+-- add "unlabeled" class with zero weight
+cityscapes.classWeights = torch.cat(cityscapes.classWeights, torch.FloatTensor{0})
 
 function cityscapes.loadNames(kind)
     --[[
@@ -213,31 +215,15 @@ function cityscapes.calcStd(files, mean)
     return retval:div(#files):sqrt()
 end
 
-function cityscapes.loadSample(idx, option)
+function cityscapes.loadSample(idx, _, augment)
     local imagePath  = cityscapes.relative .. ('colorImage/img_%04d.png'):format(idx)
     local labelsPath = cityscapes.relative .. ('groundTruthPng/labels_%04d.png'):format(idx)
 
     -- load image
     local img = cv.imread{imagePath, cv.IMREAD_COLOR}
-    cv.cvtColor{img, img, cv.COLOR_BGR2RGB}
     if img:size(1) ~= cityscapes.dsize[2] or 
        img:size(2) ~= cityscapes.dsize[1] then
         img = cv.resize{img, cityscapes.dsize, interpolation=cv.INTER_CUBIC}
-    end
-    img = img:float():div(255):permute(3,1,2):clone()
-
-    option = option or ''
-
-    -- normalize image globally
-    if not option:find('dontNormalize') then
-        for ch = 1,3 do
-            img[ch]:add(-cityscapes.mean[ch])
-            img[ch]:div(cityscapes.std[ch])
-        end
-    end
-
-    if option:find('yuv') then
-        img = image.rgb2yuv(img)
     end
 
     -- load labels
@@ -245,6 +231,44 @@ function cityscapes.loadSample(idx, option)
     if labels:size(1) ~= cityscapes.dsize[2] or
        labels:size(2) ~= cityscapes.dsize[1] then
         labels = cv.resize{labels, cityscapes.dsize, interpolation=cv.INTER_NEAREST}
+    end
+    labels[labels:eq(255)] = nClasses+1
+
+    if augment then
+        local flip = torch.random(2) == 1
+        local maybeFlipMatrix = torch.eye(3):double()
+        if flip then
+            maybeFlipMatrix[{1,1}] = -1
+            maybeFlipMatrix[{1,3}] = labels:size(2)
+        end
+        
+        local angle = (math.random() * 2 - 1) * 8
+        local scaleFactor = math.random() * 1.5 + 0.5
+        local imageCenter = {labels:size(2) / 2, labels:size(1) / 2}
+        local rotationMatrix = torch.eye(3):double()
+        rotationMatrix[{{1,2}}]:copy(cv.getRotationMatrix2D{imageCenter, angle, scaleFactor})
+        
+        local transformationMatrix = torch.mm(maybeFlipMatrix, rotationMatrix)[{{1,2}}]
+        
+        img = cv.warpAffine{
+            img, transformationMatrix, flags=cv.INTER_LINEAR,
+            borderMode=cv.BORDER_REFLECT}
+        labels = cv.warpAffine{
+            labels, transformationMatrix, flags=cv.INTER_NEAREST,
+            borderMode=cv.BORDER_CONSTANT, borderValue={nClasses+1}}
+        
+        if torch.random(2) == 1 then
+            local blurSigma = math.random() * 2.3 + 0.7
+            cv.GaussianBlur{img, {5, 5}, blurSigma, dst=img, borderType=cv.BORDER_REFLECT}
+        end
+    end
+
+    cv.cvtColor{img, img, cv.COLOR_BGR2RGB}
+    img = img:permute(3,1,2):float()
+    -- normalize image globally
+    for ch = 1,3 do
+        img[ch]:add(-cityscapes.mean[ch])
+        img[ch]:mul(1/cityscapes.std[ch])
     end
 
     return img, labels
