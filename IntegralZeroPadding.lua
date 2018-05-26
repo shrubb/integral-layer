@@ -6,6 +6,18 @@ local _, parent = torch.class('IntegralSmartNorm', 'nn.Module')
 
 ffi.cdef [[
 
+void forwardNoNorm(
+    const float *intData, const int h, const int w, float *outData,
+    const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
+    const int strideH, const int strideW);
+
+void forwardNoNormFrac(
+    const float *intData, const int h, const int w, float *outData,
+    const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
+    const float xMinCurrFrac, const float xMaxCurrFrac,
+    const float yMinCurrFrac, const float yMaxCurrFrac,
+    const float *inData, const int inDataStride, const int strideH, const int strideW);
+
 void forwardNoNormReplicate(
     const float *intData, const int h, const int w, float *outData,
     const int xMinCurr, const int xMaxCurr, const int yMinCurr, const int yMaxCurr,
@@ -44,7 +56,7 @@ void backwardNoNormFrac(
     float *inData, int inStrideRow,
     const int strideH, const int strideW); ]]
 
-local C_lib = ffi.load('C/lib/libintegral-c.so')
+local C_lib = ffi.load(paths.concat(paths.thisfile(''), 'C/lib/libintegral-c.so'))
 
 ffi.cdef [[
 
@@ -180,7 +192,7 @@ void dirtyFixWindows(struct THCState *state,
 local CUDA_lib
 
 if pcall(require, 'cutorch') then
-    CUDA_lib = ffi.load('C/lib/libintegral-cuda.so')
+    CUDA_lib = ffi.load(paths.concat(paths.thisfile(''), 'C/lib/libintegral-cuda.so'))
 end
 
 do
@@ -261,6 +273,7 @@ do
         self.onesIntegral = cv.integral{torch.ones(h, w)}:float() --torch.ones(h, w):float()
         self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, self.hOut, self.wOut)
         self.cdiv = nn.CDivTable()
+        self.area = torch.FloatTensor(2*self.nInputPlane*self.nWindows)
         
         self:float() -- set self.updateOutput, self.accGradParameters and self._type
         self:reset()
@@ -314,7 +327,6 @@ do
             self.tmpArrayGPU = torch.CudaTensor(self.h, self.w) -- (nInputPlane) x (h+1) x (w+1)
             self.tmpArraySumGPU = torch.CudaTensor(4, self.nInputPlane)
             self.integralCuda = torch.CudaTensor() -- (nInputPlane) x (h+1) x (w+1)
-            self.area = torch.CudaTensor(2*self.nInputPlane*self.nWindows)
 
             for _, param in ipairs{'xMinInt', 'xMaxInt', 'yMinInt', 'yMaxInt'} do
                 self[param] = self[param]:cudaInt()
@@ -325,7 +337,6 @@ do
             self.tmpArrayGPU = nil
             self.tmpArraySumGPU = nil
             self.integralCuda = nil
-            self.area = nil
             
             for _, param in ipairs{'xMinInt', 'xMaxInt', 'yMinInt', 'yMaxInt'} do
                 self[param] = self[param]:int()
@@ -338,22 +349,15 @@ do
         -- maybe finally replace this with `self:type(type, tensorCache)`
         -- remaining:
         -- `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`,
-        -- `xMinInt`, `xMaxInt`, `yMinInt`, `yMaxInt`, `area`
+        -- `xMinInt`, `xMaxInt`, `yMinInt`, `yMaxInt`
 
         for _, param in ipairs{
                 'outputNonNorm', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
                 'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax', 'onesIntegral', 'ones',
                 'outputOnes', 'cdiv', 'xMinFrac', 'xMaxFrac', 'yMinFrac', 'yMaxFrac',
-                'integralGradOutput', 'output'} do
+                'integralGradOutput', 'output', 'area'} do
             if self[param] then
-                if self[param].storageOffset then
-                    -- print('self.' .. param .. '.storageOffset = ' .. self[param]:storageOffset())
-                end
-                -- print('self.' .. param .. ' is ' .. self[param]:type() .. ', converting to ' .. type)
                 self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
-                if self[param].storageOffset then
-                    -- print('self.' .. param .. '.storageOffset = ' .. self[param]:storageOffset() .. '\n')
-                end
             end
         end
 
@@ -568,7 +572,7 @@ do
     end
 
     function updateOutputCPU(self, input)
-        error('NYI')
+        -- error('NYI')
         self:_reparametrize(true)
 
         dirtyFixWindows(self)
@@ -595,81 +599,11 @@ do
         self.integralDouble:resize(self.nInputPlane, self.h+1, self.w+1)
         self.integral:resize(self.integralDouble:size())
 
-        -- first, compute non-normalized box filter map (into self.outputOnes) of 1-s
-        if self.normalize then
-            self.outputOnes:resize(
-                batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
-            assert(self.outputOnes:stride(3) == self.wOut) -- for C function safety
-
-            local xMin, xMax = self.xMin:view(-1), self.xMax:view(-1)
-            local yMin, yMax = self.yMin:view(-1), self.yMax:view(-1)
-
-            for batchIdx = 1,batchSize do
-
-                for globalWindowIdx = 1,self.nInputPlane*self.nWindows do
-                    -- Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
-                    -- `integral()` behavior. Namely, I(x,0) and I(0,y) are
-                    -- always 0 (so it's a C-style array sum).
-
-                    -- However, when computing sums, we subtract values at points 
-                    -- like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
-                    -- and yMin, and thus finally they are not affected.
-                    local xMinCurr, xMinCurrFrac = round_up  (xMin[globalWindowIdx])
-                    local xMaxCurr, xMaxCurrFrac = round_down(xMax[globalWindowIdx]+1)
-                    local yMinCurr, yMinCurrFrac = round_up  (yMin[globalWindowIdx])
-                    local yMaxCurr, yMaxCurrFrac = round_down(yMax[globalWindowIdx]+1)
-
-                    -- TODO: efficient memory usage
-                    local outData = torch.data(self.outputOnes[{batchIdx, globalWindowIdx}])
-                    local intData = torch.data(self.onesIntegral)
-
-                    -- TODO: multi-window C_lib.forwardNoNorm[Frac] for speed
-                    local forwardCFunction
-
-                    if self.exact then
-                        if self.replicate then
-                            forwardCFunction = C_lib.forwardNoNormReplicateFrac
-                        else
-                            forwardCFunction = C_lib.forwardNoNormFrac
-                        end
-
-                        forwardCFunction(
-                            intData, self.h, self.w, outData, 
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                            xMinCurrFrac, xMaxCurrFrac, yMinCurrFrac, yMaxCurrFrac,
-                            torch.data(self.ones), self.ones:stride(1),
-                            self.strideH, self.strideW)
-                    else
-                        if self.replicate then
-                            forwardCFunction = C_lib.forwardNoNormReplicate 
-                        else
-                            forwardCFunction = C_lib.forwardNoNorm
-                        end
-
-                        forwardCFunction(
-                            intData, self.h, self.w, outData, 
-                            xMinCurr, xMaxCurr, yMinCurr, yMaxCurr,
-                            self.strideH, self.strideW)
-                    end
-                end
-            end
-
-            -- replace zeros with ones to avoid division-by-zero errors
-            -- (no need to do it anymore, I hope?)
-
-            -- then copy this result to all other output planes
-            -- (we don't need this as we're doing expansion later)
-            -- for inPlaneIdx = 2,input:size(1) do
-            --     local outWindows = {self.nWindows*(inPlaneIdx-1) + 1, self.nWindows*inPlaneIdx}
-            --     self.outputOnes[{outWindows, {}, {}}]:copy(outputOnesSingle)
-            -- end
-        end
-
-        -- next, compute non-normalized box filter map of `input` into self.outputNonNorm
+        -- next, compute non-normalized box filter map of `input` into self.output
         do
-            self.outputNonNorm:resize(
+            self.output:resize(
                 batchSize, self.nInputPlane, self.nWindows, self.hOut, self.wOut)
-            assert(self.outputNonNorm:stride(4) == self.wOut) -- for C function safety
+            assert(self.output:stride(4) == self.wOut) -- for C function safety
 
             for batchIdx = 1,batchSize do
 
@@ -679,7 +613,7 @@ do
 
                     local xMin, xMax = self.xMin[inPlaneIdx], self.xMax[inPlaneIdx]
                     local yMin, yMax = self.yMin[inPlaneIdx], self.yMax[inPlaneIdx]
-                    local outputNonNorm = self.outputNonNorm[{batchIdx, inPlaneIdx}]
+                    local output = self.output[{batchIdx, inPlaneIdx}]
 
                     for windowIdx = 1,self.nWindows do
                         
@@ -696,7 +630,7 @@ do
                         local yMinCurr, yMinCurrFrac = round_up  (yMin[windowIdx])
                         local yMaxCurr, yMaxCurrFrac = round_down(yMax[windowIdx]+1)
                         
-                        local outData = torch.data(outputNonNorm[windowIdx])
+                        local outData = torch.data(output[windowIdx])
                         local intData = torch.data(self.integral[inPlaneIdx])
 
                         local forwardCFunction
@@ -721,7 +655,7 @@ do
                             if self.replicate then
                                 forwardCFunction = C_lib.forwardNoNormReplicate
                             else
-                                error('NYI')
+                                -- error('NYI')
                                 forwardCFunction = C_lib.forwardNoNorm
                             end
 
@@ -734,15 +668,12 @@ do
                 end
             end
 
-            self.outputNonNorm = 
-                self.outputNonNorm:view(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
+            self.output = 
+                self.output:view(batchSize, self.nInputPlane*self.nWindows, self.hOut, self.wOut)
         end
 
         if self.normalize then
-            -- divide elementwise to get normalized box filter maps
-            self.output = self.cdiv:forward {self.outputNonNorm, self.outputOnes}
-        else
-            self.output = self.outputNonNorm
+            self.output:cmul(self:_computeArea(true):view(1, -1, 1, 1):expandAs(self.output))
         end
         
         self._backwardDone = false

@@ -1,7 +1,7 @@
 -- require 'IntegralSmartNorm'
 require 'IntegralZeroPadding'
 
-int = IntegralSmartNorm(32, 8, 128, 64):cuda()
+int = IntegralSmartNorm(32, 8, 64, 128):cuda()
 
 -- require 'cunn'
 -- int = nn.SpatialConvolution(32, 32*8, 3,3, 1,1, 1,1):cuda()
@@ -14,7 +14,7 @@ int.saveMemoryIntegralGradOutput = false
 int.saveMemoryUpdateGradInput = false
 int.saveMemoryAccGradParameters = false
 
-batch = torch.CudaTensor(16, 32, 128, 64):fill(0.666)
+batch = torch.CudaTensor(16, 32, 64, 128):fill(0.666)
 
 int:forward(batch)
 gradOutput = int.output:clone()
@@ -66,9 +66,10 @@ print('Time for 1 accGradParameters: ' .. (timer:time().real / nRepeats))
 -- Time for 1 accGradParameters: 0.1229078690211
 
 -- Int, 32->8 (exact, zero padding, normalize=true)
--- Time for 1 forward: 0.031330068906148
--- Time for 1 updateGradInput: 0.04389230410258
--- Time for 1 accGradParameters: 0.083866302172343
+-- 887 MB
+-- Time for 1 forward: 0.02483393351237	
+-- Time for 1 updateGradInput: 0.034063696861267	
+-- Time for 1 accGradParameters: 0.072249468167623
 
 -- Conv 3x3, 32->32*8
 -- 617 MB

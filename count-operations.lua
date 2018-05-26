@@ -1,9 +1,9 @@
 require 'nngraph'
 require 'cudnn'
 require 'cunn'
-require 'IntegralSmartNorm'
+require 'IntegralZeroPadding'
 
-local nClasses = 19
+local nClasses = 18
 local w, h = assert(tonumber(arg[1])), assert(tonumber(arg[2]))
 local modelFile = assert(arg[3])
 local totalOps = tonumber(arg[4] or '')
@@ -84,7 +84,7 @@ for iter = 1,2 do
         elseif kind == 'nn.SpatialUpSamplingBilinear' then
             currentOps = module.output:nElement() * 15
 
-        elseif kind == 'IntegralSmartNorm' then
+        elseif kind:find('Integral') then
             local function as(k, stride) -- apply stride
                 return math.ceil(k / stride)
             end
@@ -121,8 +121,10 @@ for iter = 1,2 do
                 info = info .. (' (%.2f%%)'):format(currentOps / totalOps * 100)
             end
             if kind:find('Convolution') then
-                info = info .. (' %dx%d, %3d -> %3d, stride %dx%d')
-                    :format(module.kW, module.kH, module.nInputPlane, module.nOutputPlane, module.dW, module.dH)
+                info = info .. (' %dx%d, %3d -> %3d, stride %dx%d, dilation %d')
+                    :format(
+                        module.kW, module.kH, module.nInputPlane, module.nOutputPlane, 
+                        module.dW, module.dH, module.dilationH or 1)
             end
             print(info)
         end
