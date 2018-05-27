@@ -255,13 +255,6 @@ do
         self.xMax = torch.FloatTensor(nInputPlane, nWindows)
         self.yMax = torch.FloatTensor(nInputPlane, nWindows)
 
-        -- when computing exact forward/backward passes, will need 
-        -- these tmp arrays for int and frac parts of xMin/xMax/yMin/yMax
-        self.xMinInt, self.xMaxInt = self.xMin:int(), self.xMin:int()
-        self.yMinInt, self.yMaxInt = self.xMin:int(), self.xMin:int()
-        self.xMinFrac, self.xMaxFrac = self.xMin:clone(), self.xMin:clone()
-        self.yMinFrac, self.yMaxFrac = self.xMin:clone(), self.xMin:clone()
-
         -- loss gradients wrt module's parameters
         self.gradXMin = torch.FloatTensor(nInputPlane, nWindows):zero()
         self.gradYMin = torch.FloatTensor(nInputPlane, nWindows):zero()
@@ -274,6 +267,10 @@ do
         self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, self.hOut, self.wOut)
         self.cdiv = nn.CDivTable()
         self.area = torch.FloatTensor(2*self.nInputPlane*self.nWindows)
+
+        self.tmpArrayGPU = torch.FloatTensor(self.h, self.w)
+        self.tmpArraySumGPU = torch.FloatTensor(4, self.nInputPlane)
+        self.integralCuda = torch.FloatTensor() -- (nInputPlane) x (h+1) x (w+1)
         
         self:float() -- set self.updateOutput, self.accGradParameters and self._type
         self:reset()
@@ -311,10 +308,6 @@ do
 
     -- define custom way of transferring the module to GPU
     function IntegralSmartNorm:type(type, tensorCache)
-        if not type then
-            return self._type
-        end
-
         if type == 'torch.DoubleTensor' then
             error(
                 'Sorry, Integral() in double precision is not yet fully implemented. ' ..
@@ -324,49 +317,12 @@ do
         if type == 'torch.CudaTensor' then
             self.updateOutput = updateOutputGPU
             self.accGradParameters = accGradParametersGPU
-            self.tmpArrayGPU = torch.CudaTensor(self.h, self.w) -- (nInputPlane) x (h+1) x (w+1)
-            self.tmpArraySumGPU = torch.CudaTensor(4, self.nInputPlane)
-            self.integralCuda = torch.CudaTensor() -- (nInputPlane) x (h+1) x (w+1)
-
-            for _, param in ipairs{'xMinInt', 'xMaxInt', 'yMinInt', 'yMaxInt'} do
-                self[param] = self[param]:cudaInt()
-            end
         else
             self.updateOutput = updateOutputCPU
             self.accGradParameters = accGradParametersCPU
-            self.tmpArrayGPU = nil
-            self.tmpArraySumGPU = nil
-            self.integralCuda = nil
-            
-            for _, param in ipairs{'xMinInt', 'xMaxInt', 'yMinInt', 'yMaxInt'} do
-                self[param] = self[param]:int()
-            end
-        end
-
-        tensorCache = tensorCache or {}
-
-        -- convert only specified tensors
-        -- maybe finally replace this with `self:type(type, tensorCache)`
-        -- remaining:
-        -- `integral`, `integralCuda`, `integralDouble`, `tmpArrayGPU`, `tmpArraySumGPU`,
-        -- `xMinInt`, `xMaxInt`, `yMinInt`, `yMaxInt`
-
-        for _, param in ipairs{
-                'outputNonNorm', 'gradInput', 'xMin', 'xMax', 'yMin', 'yMax', 'areaCoeff',
-                'gradXMin', 'gradXMax', 'gradYMin', 'gradYMax', 'onesIntegral', 'ones',
-                'outputOnes', 'cdiv', 'xMinFrac', 'xMaxFrac', 'yMinFrac', 'yMaxFrac',
-                'integralGradOutput', 'output', 'area'} do
-            if self[param] then
-                self[param] = nn.utils.recursiveType(self[param], type, tensorCache)
-            end
-        end
-
-        if self.backpropHelper then
-            self.backpropHelper:type(type, tensorCache)
         end
         
-        self._type = type
-        return self
+        return nn.Module.type(self, type, tensorCache)
     end
 
     -- overload
@@ -1085,6 +1041,8 @@ do
 
     function accGradParametersCPU(self, input, gradOutput, scale)
         scale = scale or 1
+
+        error('NYI')
 
         self:_reparametrize(true)
 
