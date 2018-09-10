@@ -1,14 +1,18 @@
 -- require 'IntegralSmartNorm'
 require 'IntegralZeroPadding'
 
-int = IntegralSmartNorm(32, 8, 64, 128):cuda()
+local seed = 100
+cutorch.manualSeed(seed)
+torch.manualSeed(seed)
+math.randomseed(seed)
 
+int = IntegralSmartNorm(32, 4, 64, 128):cuda()
 -- require 'cunn'
 -- int = nn.SpatialConvolution(32, 32*8, 3,3, 1,1, 1,1):cuda()
 
 int.replicate = false
 int.normalize = true
-int.exact = true
+int.exact = false
 int.saveMemoryIntegralInput = false
 int.saveMemoryIntegralGradOutput = false
 int.saveMemoryUpdateGradInput = false
@@ -17,24 +21,26 @@ int.saveMemoryAccGradParameters = false
 batch = torch.CudaTensor(16, 32, 64, 128):fill(0.666)
 
 int:forward(batch)
-gradOutput = int.output:clone()
-int:updateGradInput(batch, gradOutput)
-int:accGradParameters(batch, gradOutput)
+-- gradOutput = int.output:clone()
+-- int:updateGradInput(batch, gradOutput)
+-- int:accGradParameters(batch, gradOutput)
 -- do return end
 
-local nRepeats = 30
+local nRepeats = 100
 
+cutorch.synchronize()
 local timer = torch.Timer()
 for k = 1,nRepeats do
     int:forward(batch)
 end
 
 cutorch.synchronize()
-print('Time for 1 forward: ' .. (timer:time().real / nRepeats))
+print(('Time for %d forwards (ms): %.4f'):format(nRepeats, timer:time().real * 1000))
+do return end
 
 int:backward(batch, gradOutput)
-cutorch.synchronize()
 
+cutorch.synchronize()
 timer:reset()
 for k = 1,nRepeats do
     int:updateGradInput(batch, gradOutput)

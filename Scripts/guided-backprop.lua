@@ -2,7 +2,7 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'cutorch'
 require 'cudnn'
 require 'cunn'
-require 'IntegralSmartNorm'
+require 'IntegralZeroPadding'
 
 local saveMemory = false
 

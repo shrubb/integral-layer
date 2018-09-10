@@ -1,3 +1,6 @@
+local exact = false
+if exact then print('WARNING: computing ops for exact ints version') end
+
 require 'nngraph'
 require 'cudnn'
 require 'cunn'
@@ -90,8 +93,9 @@ for iter = 1,2 do
             end
 
             currentOps = 
-                module.h * module.w * module.nInputPlane +
-                as(module.h, module.strideH) * as(module.w, module.strideW) * module.nInputPlane * module.nWindows * 5
+                module.h * module.w * module.nInputPlane + -- integral images
+                as(module.h, module.strideH) * as(module.w, module.strideW) *
+                    module.nInputPlane * module.nWindows * (exact and 25 or 5)
 
             if intNumRedundantPlanes[intIdx] then
                 currentOps =

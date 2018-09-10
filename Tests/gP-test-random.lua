@@ -1,10 +1,10 @@
 require 'torch'
 torch.setdefaulttensortype('torch.FloatTensor')
 
-require 'IntegralSmartNorm'
+require 'IntegralZeroPadding'
 
 local seed = os.time()
-seed = 1522690711
+-- seed = 1522690711
 torch.manualSeed(seed)
 math.randomseed(seed)
 
@@ -34,8 +34,8 @@ end
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW):type(dtype)
 
 int.exact = true
-int.replicate = true
-int.normalize = false
+int.replicate = false
+int.normalize = true
 int.saveMemoryIntegral = false
 int.saveMemoryIntegralGradOutput = false
 int.saveMemoryAccGradParameters = false

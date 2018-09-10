@@ -10,6 +10,7 @@
 #include <THC/THC.h>
 
 #define NUM_THREADS 1024
+#define BLOCK_SIZE 1024
 
 using std::max;
 using std::min;
@@ -151,26 +152,26 @@ __global__ void forwardNoNormFracKernel(
     }
 }
 
+namespace constant {
+    __constant__ float xMinFrac[1536], xMaxFrac[1536];
+    __constant__ float yMinFrac[1536], yMaxFrac[1536];
+    __constant__ float area[1536];
+    __constant__ int xMinInt[1536], xMaxInt[1536];
+    __constant__ int yMinInt[1536], yMaxInt[1536];
+}
+
+template <bool normalize>
 __global__ void forwardNoNormKernel(
-    const float *intData, const int intDataStrideChannel, float *outData,
-    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w,
-    const float *const xMin, const float *const xMax,
-    const float *const yMin, const float *const yMax) {
+    const float * __restrict__ intData, const int intDataStrideChannel,
+    float * __restrict__ outData,
+    const int batchSize, const int nInputPlane, const int nWindows, const int h, const int w) {
 
-    int id = NUM_THREADS * blockIdx.x + threadIdx.x;
-    outData += id; // outData now points to our output pixel
+    const int y = blockDim.x * blockIdx.x + threadIdx.x;
+    const int x = blockDim.y * blockIdx.y + threadIdx.y;
+    const int inPlaneIdx = blockIdx.z / nWindows;
+    const int paramIdx = blockIdx.z % (nInputPlane * nWindows);
 
-    const int y = id % w; id /= w;
-    const int x = id % h; id /= h;
-    const int windowIdx = id % nWindows; id /= nWindows;
-
-    // `id` is now is now the current global input plane number
-    intData += id * intDataStrideChannel;
-
-    const int globalWindowIdx = (id % nInputPlane) * nWindows + windowIdx; id /= nInputPlane;
-    const int & batchIdx = id;
-
-    if (batchIdx < batchSize) {
+    if (x < h and y < w) {
 
         // Must add 1 to xMax/yMax/xMin/yMin due to OpenCV's
         // `integral()` behavior. Namely, I(x,0) and I(0,y) are
@@ -180,24 +181,20 @@ __global__ void forwardNoNormKernel(
         // like y+yMin-1 and x+xMin-1, so we also SUBTRACT 1 from xMin
         // and yMin, and thus finally they are not affected.
 
-        const int xMinCurr = (int)ceil(xMin[globalWindowIdx]);
-        const int yMinCurr = (int)ceil(yMin[globalWindowIdx]);
-        const int xMaxCurr = (int)floor(xMax[globalWindowIdx]) + 1;
-        const int yMaxCurr = (int)floor(yMax[globalWindowIdx]) + 1;
-
-        const int t = max(0, min(x+xMinCurr, h));
-        const int b = max(0, min(x+xMaxCurr, h));
-        const int l = max(0, min(y+yMinCurr, w));
-        const int r = max(0, min(y+yMaxCurr, w));
+        const int t = max(0, min(x+constant::xMinInt[paramIdx], h));
+        const int b = max(0, min(x+constant::xMaxInt[paramIdx], h));
+        const int l = max(0, min(y+constant::yMinInt[paramIdx], w));
+        const int r = max(0, min(y+constant::yMaxInt[paramIdx], w));
 
         float outValue = 0;
 
-        outValue += intData[b*(w+1) + r];
-        outValue -= intData[t*(w+1) + r];
-        outValue -= intData[b*(w+1) + l];
-        outValue += intData[t*(w+1) + l];
+        outValue += intData[inPlaneIdx * intDataStrideChannel + b*(w+1) + r];
+        outValue -= intData[inPlaneIdx * intDataStrideChannel + t*(w+1) + r];
+        outValue -= intData[inPlaneIdx * intDataStrideChannel + b*(w+1) + l];
+        outValue += intData[inPlaneIdx * intDataStrideChannel + t*(w+1) + l];
 
-        *outData = outValue;
+        outData[blockIdx.z * h * w + x * w + y] = 
+            outValue * (normalize ? constant::area[paramIdx] : 1); 
     }
 }
 
@@ -205,8 +202,8 @@ extern "C"
 void forwardNoNormCuda(THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int batchSize, int nInputPlane, int nWindows, int h, int w,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    const int strideH, const int strideW) {
+    const int *intParams, const float *area, const int strideH, const int strideW) {
+    // area: array of box areas per parameter, if need to normalize; otherwise nullptr
 
     if (strideH != 1 or strideW != 1) {
         THError("NYI");
@@ -218,13 +215,48 @@ void forwardNoNormCuda(THCState *state,
         return;
     }
 
-    const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
-    const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
+    // intParams/fracParams: xMin, yMin, xMax, yMax
+    const int nParams = nInputPlane*nWindows;
 
-    forwardNoNormKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
-        intData, intDataStrideChannel, outData,
-        batchSize, nInputPlane, nWindows, h, w,
-        xMin, xMax, yMin, yMax);
+    THCudaCheck(cudaMemcpyToSymbol(
+        constant::xMinInt, intParams + 0*nParams, nParams*sizeof(int), 0,
+        cudaMemcpyDeviceToDevice));
+    THCudaCheck(cudaMemcpyToSymbol(
+        constant::yMinInt, intParams + 1*nParams, nParams*sizeof(int), 0,
+        cudaMemcpyDeviceToDevice));
+    THCudaCheck(cudaMemcpyToSymbol(
+        constant::xMaxInt, intParams + 2*nParams, nParams*sizeof(int), 0,
+        cudaMemcpyDeviceToDevice));
+    THCudaCheck(cudaMemcpyToSymbol(
+        constant::yMaxInt, intParams + 3*nParams, nParams*sizeof(int), 0,
+        cudaMemcpyDeviceToDevice));
+    
+    if (area != nullptr) {
+    THCudaCheck(cudaMemcpyToSymbol(
+        constant::area, area, nParams*sizeof(float), 0,
+        cudaMemcpyDeviceToDevice));
+    }
+
+    // block dimension: (colIdx, rowIdx, 1)
+    // grid dimension:  (------, ------, total-number-of-output-planes)
+
+    const dim3 blockSize(32, 32, 1);
+    const dim3 gridSize(
+        (w + blockSize.x - 1) / blockSize.x,
+        (h + blockSize.y - 1) / blockSize.y,
+        (batchSize*nInputPlane*nWindows + blockSize.z - 1) / blockSize.z);
+
+    if (area == nullptr) {
+        forwardNoNormKernel <false>
+            <<<gridSize, blockSize, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, outData,
+            batchSize, nInputPlane, nWindows, h, w);
+    } else {
+        forwardNoNormKernel <true>
+            <<<gridSize, blockSize, 0, THCState_getCurrentStream(state)>>> (
+            intData, intDataStrideChannel, outData,
+            batchSize, nInputPlane, nWindows, h, w);
+    }
     THCudaCheck(cudaGetLastError());
 }
 
@@ -247,6 +279,8 @@ void forwardNoNormFracCuda(THCState *state,
         return;
     }
 
+    // intParams/fracParams: xMin, yMin, xMax, yMax
+
     const int threadsNeeded = batchSize * nInputPlane * nWindows * h * w;
     const int numBlocks = (threadsNeeded + NUM_THREADS - 1) / NUM_THREADS;
 
@@ -258,15 +292,15 @@ void forwardNoNormFracCuda(THCState *state,
     THCudaCheck(cudaGetLastError());
 }
 
-__global__ void cmulWithAreaKernel(float *output, float *area, int batchSize, int nParams, int hw) {
-    int id = NUM_THREADS * blockIdx.x + threadIdx.x;
-    output += id; // outData now points to our output pixel
+__global__ void cmulWithAreaKernel(
+    float * __restrict__ output, const float * __restrict__ area,
+    const int batchSize, const int nParams, const int hw) {
 
-    id /= hw;
-    const int paramIdx = id % nParams;
+    const int id = NUM_THREADS * blockIdx.x + threadIdx.x;
+    const int paramIdx = (id / hw) % nParams;
 
-    if (id < batchSize * nParams) {
-        *output *= area[paramIdx];
+    if (id < batchSize * nParams * hw) {
+        output[id] *= area[paramIdx];
     }
 }
 
@@ -279,6 +313,42 @@ void cmulWithArea(THCState *state,
 
     cmulWithAreaKernel <<<numBlocks, NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
         output, area, batchSize, nParams, hw);
+    THCudaCheck(cudaGetLastError());
+}
+
+__global__ void splitParamsKernel(
+    const float * __restrict__ xMin, const float * __restrict__ xMax,
+    const float * __restrict__ yMin, const float * __restrict__ yMax,
+    int * __restrict__ intParams, float * __restrict__ fracParams, const int nParams) {
+
+    int id = BLOCK_SIZE * blockIdx.x + threadIdx.x;
+    if (id < 2 * nParams) {
+        const float *paramMin = id < nParams ? xMin : yMin;
+        const float *paramMax = id < nParams ? xMax : yMax;
+
+        const int paramIndex = id < nParams ? id : id - nParams;
+
+        float minInt = ceil(paramMin[paramIndex]);
+        fracParams[id] = minInt - paramMin[paramIndex];
+        intParams[id] = static_cast<int>(minInt);
+
+        float maxInt = floor(paramMax[paramIndex]);
+        fracParams[id + 2*nParams] = paramMax[paramIndex] - maxInt;
+        intParams[id + 2*nParams] = static_cast<int>(maxInt) + 1;
+    }
+}
+
+extern "C"
+void splitParams(THCState *state,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int *intParams, float *fracParams, int nParams) {
+
+    // intParams/fracParams: xMin, yMin, xMax, yMax
+    const int threadsNeeded = 2 * nParams;
+    const int numBlocks = (threadsNeeded + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    splitParamsKernel <<<numBlocks, BLOCK_SIZE, 0, THCState_getCurrentStream(state)>>> (
+        xMin, xMax, yMin, yMax, intParams, fracParams, nParams);
     THCudaCheck(cudaGetLastError());
 }
 

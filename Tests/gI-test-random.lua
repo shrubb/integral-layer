@@ -4,12 +4,12 @@ torch.setdefaulttensortype('torch.FloatTensor')
 require 'IntegralZeroPadding'
 
 local seed = os.time()
--- seed = 1524148367
+-- seed = 1536570919
 print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'inner' -- 'corner' | 'border' | 'inner'
+local testType = 'corner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -21,9 +21,7 @@ for iter = 1,(arg[1] or 1) do
 
 strideH, strideW = 1, 1
 batchSize = 2
-h,w = math.random(1+strideH, 40), math.random(1+strideW, 40)
-print('h, w = ' .. h .. ', ' .. w)
-print('stride = ' .. strideH .. ', ' .. strideW)
+h,w = math.random(1+strideH, 20), math.random(1+strideW, 20)
 
 local function applyStride(k, stride)
     return math.ceil(k / stride)
@@ -31,9 +29,9 @@ end
 
 int = IntegralSmartNorm(2, 2, h, w, strideH, strideW)
 
-int.exact = true
+int.exact = false
 int.replicate = false
-int.normalize = true
+int.normalize = false
 int.saveMemoryIntegralInput = false
 int.saveMemoryIntegralGradOutput = false
 int.saveMemoryUpdateGradInput = false
@@ -56,9 +54,11 @@ elseif testType == 'border' then
     end
 end
 targetBatchIdx, targetPlane = math.random(1, batchSize), math.random(1, int.nInputPlane)
-
+if iter == 4 or true then
+print('h, w = ' .. h .. ', ' .. w)
+print('stride = ' .. strideH .. ', ' .. strideW)
 print('targetX, targetY, targetBatchIdx, targetPlane = ' .. targetX .. ', ' .. targetY .. ', ' .. targetBatchIdx .. ',' .. targetPlane)
-
+end
 crit = nn.MSECriterion():type(dtype)
 
 img = torch.rand(batchSize, int.nInputPlane, h, w):type(dtype)
@@ -87,7 +87,7 @@ for planeIdx = 1,int.nInputPlane do
 end
 int:_reparametrize(false)
 
-if iter == 14 or true then
+if iter == 4 or true then
 int:type(dtype)
 int:forward(img)
 target:add(int.output)

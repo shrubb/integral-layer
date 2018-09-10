@@ -68,20 +68,25 @@ inline void __cudaCheckError( const char *file, const int line )
 /************************ Integral image computation ************************/
 
 __global__ void accumulateRowsKernel(
-    float *input, float *output, int channels, int totalRows, int w);
+    const float * __restrict__ input, float * __restrict__ output,
+    const int channels, const int h, const int w);
 __global__ void accumulateColsKernel(
-    float *input, float *output, int channels, int h, int w);
+    const float * __restrict__ input, float * __restrict__ output,
+    const int channels, const int h, const int w);
 __global__ void accumulateColsInplaceKernel(
-    float *input, int channels, int h, int w);
+    float * __restrict__ input, const int channels, const int h, const int w);
 __global__ void accumulateColsInplaceTransposedKernel(
-    float *input, int channels, int h, int w);
+    float * __restrict__ input, const int channels, const int h, const int w);
 
 extern "C"
 void integralImageCuda(THCState *state,
     float *input, float *output, int channels, int h, int w, float *tmp) {
+    // input : (channels) x (h) x (w), contiguous
+    // output: (channels) x (h+1) x (w+1), contiguous
+    // tmp   : at least (channels) * (h+1) * (w+1)
 
     int blockSize1D, gridSize1D;
-    float ONE = 1.0, ZERO = 0.0;
+    const float ONE = 1.0, ZERO = 0.0;
 
     cublasSetStream(THCState_getCurrentBlasHandle(state), THCState_getCurrentStream(state));
 
@@ -99,7 +104,7 @@ void integralImageCuda(THCState *state,
         &ZERO, tmp, channels * (h+1),
         tmp, channels * (h+1)));
 
-    int totalRows = channels * h;
+    int totalRows = channels * h; // actually, number of cols in (w+1) x (channels * (h+1)) image
     blockSize1D = NUM_THREADS;
     gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
     accumulateColsInplaceTransposedKernel
@@ -115,14 +120,15 @@ void integralImageCuda(THCState *state,
 }
 
 __global__ void accumulateRowsKernel(
-    float *input, float *output, int channels, int h, int w) {
+    const float * __restrict__ input, float * __restrict__ output,
+    const int channels, const int h, const int w) {
     // view multichannel image as a multiline single-channel image
     int globalRowIdx = NUM_THREADS * blockIdx.x + threadIdx.x;
 
     if (globalRowIdx < channels * h) {
         float *outputRow = output + (globalRowIdx + globalRowIdx / h + 1) * (w+1) + 1;
+        
         outputRow[-1] = 0;
-
         double sum = 0;
         for (int i = 0; i < w; ++i) {
             sum += input[globalRowIdx * w + i];
@@ -134,44 +140,51 @@ __global__ void accumulateRowsKernel(
     }
 }
 
-__global__ void accumulateColsKernel(float *input, float *output, int channels, int h, int w) {
-    // global column index (of all `channels * w` columns in this image)
-    int colIdx = NUM_THREADS * blockIdx.x + threadIdx.x;
+__global__ void accumulateColsKernel(
+    const float * __restrict__ input, float * __restrict__ output,
+    const int channels, const int h, const int w) {
+    // input : (channels * h) x (w)
+    // output: (channels * (h+1)) x (w+1) -- first column remains untouched
 
-    if (colIdx < channels * w) {
-        // jump to current channel
-        input  += (colIdx / w) * h * w;
-        output += (colIdx / w) * (h+1) * (w+1);
-        colIdx %= w; // switch to local column index,
-        ++colIdx;    // it's 1-indexed because first output column is always zero
+    // global column index (of total `channels * w` columns in this image):
+    const int globalColIdx = NUM_THREADS * blockIdx.x + threadIdx.x;
 
-        output[colIdx] = 0; // first element of every column is always zero
+    if (globalColIdx < channels * w) {
+        const int channelIdx = globalColIdx / w;
+        const int colIdx = globalColIdx - channelIdx * w;
+        
+        // jump to the channel of interest:
+        int inputPos = channelIdx * h * w + colIdx;
+        // (let local columns be 1-indexed: 0-th output column is always zero)
+        int outputPos = channelIdx * (h+1) * (w+1) + colIdx + 1;
+
+        output[outputPos] = 0; // 0-th element of every column is always zero
         double sum = 0;
-
         for (int i = 1; i <= h; ++i) {
-            sum += static_cast<double>(input[(i-1) * w + colIdx - 1]);
-            output[i * (w+1) + colIdx] = static_cast<float>(sum);
+            sum += static_cast<double>(input[inputPos + (i-1) * w]);
+            output[outputPos + i * (w+1)] = static_cast<float>(sum);
         }
     }
 }
 
-__global__ void accumulateColsInplaceTransposedKernel(float *input, int channels, int h, int w) {
+__global__ void accumulateColsInplaceTransposedKernel(
+    float * __restrict__ input, const int channels, const int h, const int w) {
     // in-place.
-    // input is a `(w+1) x channels * (h+1)` array
+    // input: (w+1) x (channels * (h+1))
 
-    // global column index (of all `channels * w` columns in this image)
-    int colIdx = NUM_THREADS * blockIdx.x + threadIdx.x;
+    // global column index (of total `channels * w` columns in this image):
+    const int globalColIdx = NUM_THREADS * blockIdx.x + threadIdx.x;
 
-    if (colIdx < channels * h) {
+    if (globalColIdx < channels * h) {
+        const int channelIdx = globalColIdx / h;
+        // add `channelIdx + 1` to account for one extra column in each horizontally stacked image
+        const int colIdx = globalColIdx + channelIdx + 1;
+
         // need to zero the (0,0) corner of the output separately >:(
-        input[(colIdx / h) * (h+1)] = 0;
-
-        colIdx += colIdx / h + 1; // make `colIdx` the (h+1)-array indexer
+        input[channelIdx * (h+1)] = 0;
 
         input[colIdx] = 0; // first element of every column is always zero
-
         double sum = 0;
-
         for (int i = 1; i <= w; ++i) {
             float *currentElement = &input[i * channels * (h+1) + colIdx];
             sum += static_cast<double>(*currentElement);
@@ -180,7 +193,8 @@ __global__ void accumulateColsInplaceTransposedKernel(float *input, int channels
     }
 }
 
-__global__ void accumulateColsInplaceKernel(float *input, int channels, int h, int w) {
+__global__ void accumulateColsInplaceKernel(
+    float * __restrict__ input, const int channels, const int h, const int w) {
     // in-place.
     // input is already a `channels * (h+1) x (w+1)` array
 
@@ -194,7 +208,6 @@ __global__ void accumulateColsInplaceKernel(float *input, int channels, int h, i
 
         input[colIdx] = 0; // first element of every column is always zero
         double sum = 0;
-
         for (int i = 1; i <= h; ++i) {
             float *currentElement = &input[i * (w+1) + colIdx];
             sum += static_cast<double>(*currentElement);

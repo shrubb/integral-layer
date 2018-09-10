@@ -7,7 +7,9 @@ cudnn.fastest = true
 cudnn.benchmark = true
 
 local useCudnn = true
-local cpu = true
+local cpu = false
+local exact = false
+if exact then print('WARNING: running exact ints version') end  
 
 if cpu then assert(torch.getnumthreads() == 1) end
 
@@ -21,6 +23,11 @@ if modelFile:find('.lua') then
     net = assert(loadfile(modelFile))(w, h, nClasses)
 else
     net = torch.load(modelFile)
+    while not torch.type(net:get(#net)):find('FullConvolution') and 
+          not torch.type(net:get(#net)):find('Bilinear') do
+        print('Removing ' .. torch.type(net:get(#net)))
+        net:remove()
+    end
 end
 
 net:type(tensorType)
@@ -47,7 +54,7 @@ end
 net:evaluate()
 
 for _,int in ipairs(net:findModules('IntegralSmartNorm')) do
-    int.exact = false
+    int.exact = exact
 end
 
 sample = torch.FloatTensor(1, 3, h, w):fill(1.23):typeAs(net)

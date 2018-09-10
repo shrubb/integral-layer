@@ -147,7 +147,7 @@ for modelIdx, modelPath in ipairs(arg) do
     package.loaded['IntegralSmartNorm'] = nil
     package.loaded['IntegralZeroPadding'] = nil
 
-    require (modelPath:find('zp') and 'IntegralZeroPadding' or 'IntegralSmartNorm')
+    require 'IntegralZeroPadding'
 
     net = torch.load(modelPath .. '/net.t7')[1]
     

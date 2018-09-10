@@ -65,8 +65,7 @@ ffi.cdef [[
 void forwardNoNormCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
     int batchSize, int nInputPlane, int nWindows, int h, int w,
-    float *xMin, float *xMax, float *yMin, float *yMax,
-    const int strideH, const int strideW);
+    const int *intParams, const float *area, const int strideH, const int strideW);
 
 void forwardNoNormFracCuda(struct THCState *state,
     float *intData, int intDataStrideChannel, float *outData,
@@ -77,6 +76,10 @@ void forwardNoNormFracCuda(struct THCState *state,
 
 void cmulWithArea(struct THCState *state,
     float *output, float *area, int batchSize, int nParams, int hw);
+
+void splitParams(struct THCState *state,
+    float *xMin, float *xMax, float *yMin, float *yMax,
+    int *intParams, float *fracParams, int nParams);
 
 void updateGradInputCuda(struct THCState *state,
     const float *gradOutputIntData, float *tmpArray,
@@ -267,6 +270,8 @@ do
         self.outputOnes = torch.FloatTensor(nInputPlane*nWindows, self.hOut, self.wOut)
         self.cdiv = nn.CDivTable()
         self.area = torch.FloatTensor(2*self.nInputPlane*self.nWindows)
+        self.intParams = torch.IntTensor(4, self.nInputPlane*self.nWindows)
+        self.fracParams = torch.FloatTensor(4, self.nInputPlane*self.nWindows)
 
         self.tmpArrayGPU = torch.FloatTensor(self.h, self.w)
         self.tmpArraySumGPU = torch.FloatTensor(4, self.nInputPlane)
@@ -314,15 +319,21 @@ do
                 'Maybe you can help? https://github.com/shrubb/integral-layer')
         end
 
+        nn.Module.type(self, type, tensorCache)
+
         if type == 'torch.CudaTensor' then
             self.updateOutput = updateOutputGPU
             self.accGradParameters = accGradParametersGPU
+
+            self.intParams = self.intParams:cudaInt()
         else
             self.updateOutput = updateOutputCPU
             self.accGradParameters = accGradParametersCPU
+
+            self.intParams = self.intParams:int()
         end
-        
-        return nn.Module.type(self, type, tensorCache)
+
+        return self
     end
 
     -- overload
@@ -762,28 +773,21 @@ do
                         forwardCudaFunction = CUDA_lib.forwardNoNormCuda
                     end
 
+                    CUDA_lib.splitParams(cutorch.getState(),
+                        torch.data(self.xMin), torch.data(self.xMax),
+                        torch.data(self.yMin), torch.data(self.yMax),
+                        torch.data(self.intParams), torch.data(self.fracParams),
+                        self.xMin:nElement())
+                    local area = self:_computeArea(true)
+
                     forwardCudaFunction(cutorch.getState(),
                         self.integralCuda:data(), self.integralCuda:stride(2), self.output:data(),
                         batchSize, self.nInputPlane, self.nWindows, self.h, self.w,
-                        torch.data(self.xMin), torch.data(self.xMax),
-                        torch.data(self.yMin), torch.data(self.yMax),
+                        self.intParams:data(), self.normalize and area:data() or nil,
                         self.strideH, self.strideW)
                 end
             end
         end -- do
-
-        if self.normalize then
-            -- divide by area
-
-            -- cutorch's kernelPointwiseApply2 is slow on non-contiguous tensors :(
-            -- self.output:cmul(self:_computeArea(true):view(1, -1, 1, 1):expandAs(self.output))
-
-            -- we'll do it manually
-            local area = self:_computeArea(true)
-            CUDA_lib.cmulWithArea(cutorch.getState(),
-                self.output:data(), area:data(),
-                batchSize, self.xMin:nElement(), self.hOut*self.wOut)
-        end
         
         self._backwardDone = false
 
