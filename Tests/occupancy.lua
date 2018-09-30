@@ -21,6 +21,7 @@ int.saveMemoryAccGradParameters = false
 batch = torch.CudaTensor(16, 32, 64, 128):fill(0.666)
 
 int:forward(batch)
+--cutorch.synchronize() int:forward(batch) do return end
 -- gradOutput = int.output:clone()
 -- int:updateGradInput(batch, gradOutput)
 -- int:accGradParameters(batch, gradOutput)

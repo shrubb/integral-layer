@@ -9,7 +9,7 @@ print('Random seed is ' .. seed)
 torch.manualSeed(seed)
 math.randomseed(seed)
 
-local testType = 'corner' -- 'corner' | 'border' | 'inner'
+local testType = 'inner' -- 'corner' | 'border' | 'inner'
 local CUDA = true
 local dtype = CUDA and 'torch.CudaTensor' or 'torch.FloatTensor'
 
@@ -21,7 +21,7 @@ for iter = 1,(arg[1] or 1) do
 
 strideH, strideW = 1, 1
 batchSize = 2
-h,w = math.random(1+strideH, 20), math.random(1+strideW, 20)
+h,w = math.random(1+strideH, 10), math.random(1+strideW, 10)
 
 local function applyStride(k, stride)
     return math.ceil(k / stride)

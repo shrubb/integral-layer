@@ -63,7 +63,7 @@ if not cpu then cutorch.synchronize() end
 
 -- torch.setnumthreads(1)
 
-local nRepeats = 40
+local nRepeats = cpu and 10 or 160
 
 print('Starting repeats')
 local timer = torch.Timer()
