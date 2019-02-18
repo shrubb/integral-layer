@@ -87,10 +87,13 @@ model:add(nn.JoinTable(2)) -- can't use Concat, because SpatialConvolution needs
 model:add(SpatialBatchNormalization(16, 1e-3))
 model:add(nn.PReLU(16))
 model:add(bottleneck(16, 64, true))                              -- 64x128
-for i = 1,4 do
-   model:add(bottleneck(64, 64))
-end
+
+model:add(bottleneck(64, 64))
+model:add(bottleneck(64, 64))
+model:add(bottleneck(64, 64))
+model:add(bottleneck(64, 64))
 model:add(bottleneck(64, 128, true))                             -- 32x64
+
 for i = 1,2 do
    model:add(cbottleneck(128, 128))
    model:add(dbottleneck(128, 128))
@@ -131,7 +134,7 @@ assert(#pooling_modules == 3, 'There should be 3 pooling modules')
 
 -- decoder:
 
-function bottleneck(input, output, upsample, reverse_module)
+function bottleneck(input, output, upsample, h, w) --, reverse_module)
    local internal = output / 4
    local input_stride = upsample and 2 or 1
 
@@ -158,24 +161,23 @@ function bottleneck(input, output, upsample, reverse_module)
    if input ~= output or upsample then
       other:add(SpatialConvolution(input, output, 1, 1, 1, 1, 0, 0):noBias())
       other:add(SpatialBatchNormalization(output, 1e-3))
-      if upsample and reverse_module then
-         other:add(nn.SpatialMaxUnpooling(reverse_module))
+      
+      if upsample == 'bilinear' then
+         other:add(nn.SpatialUpSamplingBilinear{oheight=h, owidth=w})
+      elseif upsample == 'maxunpooling' then
+         other:add(nn.SpatialMaxUnpooling(h))
       end
    end
 
-   if upsample and not reverse_module then
-      main:remove(#main.modules) -- remove BN
-      return main
-   end
    return module:add(sum):add(nn.CAddTable()):add(ReLU(true))
 end
 
 --model:add(bottleneck(128, 128))
-model:add(bottleneck(128, 64, true, pooling_modules[3]))         -- 32x64
+model:add(bottleneck(128, 64, 'maxunpooling', pooling_modules[3]))         -- 32x64
 model:add(bottleneck(64, 64))
 model:add(bottleneck(64, 64))
-model:add(bottleneck(64, 16, true, pooling_modules[2]))          -- 64x128
+model:add(bottleneck(64, 16, 'maxunpooling', pooling_modules[2]))          -- 64x128
 model:add(bottleneck(16, 16))
-model:add(SpatialFullConvolution(16, nClasses+1, 2, 2, 2, 2))
+model:add(SpatialFullConvolution(16, nClasses+1, 2,2, 2,2))
 
 return model

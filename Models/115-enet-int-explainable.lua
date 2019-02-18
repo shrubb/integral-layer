@@ -110,24 +110,19 @@ model:add(SpatialBatchNormalization(16, 1e-3))
 model:add(nn.PReLU(16))
 model:add(bottleneck(16, 64, true))                              -- 64x128
 
-
 model:add(bottleneck(64, 64))
 model:add(bottleneckBox(64, 4, 0.15, h/4, w/4))
 model:add(bottleneck(64, 64))
 model:add(bottleneckBox(64, 4, 0.15, h/4, w/4))
-
 model:add(bottleneck(64, 128, true))                             -- 32x64
 
 for i = 1,2 do
    model:add(cbottleneck(128, 128))
    model:add(bottleneckBox(128, 4, 0.25, h/8, w/8))
-
    model:add(wbottleneck(128, 128))
    model:add(bottleneckBox(128, 4, 0.25, h/8, w/8))
-
    model:add(cbottleneck(128, 128))
    model:add(bottleneckBox(128, 4, 0.25, h/8, w/8))
-
    model:add(wbottleneck(128, 128))
    model:add(bottleneckBox(128, 4, 0.25, h/8, w/8))
 end
@@ -192,7 +187,7 @@ function bottleneck(input, output, upsample, h, w) --, reverse_module)
       if upsample == 'bilinear' then
          other:add(nn.SpatialUpSamplingBilinear{oheight=h, owidth=w})
       elseif upsample == 'maxunpooling' then
-      	 other:add(nn.SpatialMaxUnpooling(h))
+         other:add(nn.SpatialMaxUnpooling(h))
       end
    end
 
@@ -205,6 +200,6 @@ model:add(bottleneck(64, 64))
 model:add(bottleneckBox(64, 4, 0.1, h/4, w/4))
 model:add(bottleneck(64, 16, 'maxunpooling', pooling_modules[2]))          -- 64x128
 model:add(bottleneckBox(16, 2, 0.1, h/2, w/2))
-model:add(SpatialFullConvolution(16, nClasses+1, 2,2, 2,2, 0,0, 0,0))
+model:add(SpatialFullConvolution(16, nClasses+1, 2,2, 2,2))
 
 return model, {}
