@@ -267,9 +267,6 @@ void forwardNoNormReplicateVarScaleCuda(
     const int strideH, const int strideW) {
 
     if (strideH != 1 or strideW != 1) {
-        // TODO
-        int a = *(int*)0;
-
         // strided::forwardNoNormReplicateCuda(
         //     intData, intDataStrideChannel, outData,
         //     h, w, nInputPlane, nWindows,

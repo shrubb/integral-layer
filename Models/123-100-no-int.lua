@@ -1,10 +1,4 @@
--- ERFNet
-
--- Total operations: 30875844608   
--- Convolutions do 99.51%  
--- Integral layers do 0.00%    
--- Total number of parameters: 10102246
-
+-- ERFNet^-
 local w, h, nClasses = ...
 assert(w)
 assert(h)
@@ -12,6 +6,8 @@ assert(nClasses)
 
 require 'nn'
 require 'cudnn'
+require 'IntegralZeroPadding'
+local BoxConvolution = IntegralSmartNorm
 
 local SpatialConvolution = cudnn.SpatialConvolution
 local SpatialDilatedConvolution = cudnn.SpatialDilatedConvolution
@@ -37,8 +33,8 @@ end
 local function upsampler(inChannels, outChannels)
     return nn.Sequential()
         :add(SpatialFullConvolution(inChannels, outChannels, 3,3, 2,2, 1,1, 1,1))
-        :add(ReLU(true))
         :add(SpatialBatchNormalization(outChannels))
+        :add(ReLU(true))
 end
 
 local function nonBt1D(inChannels, dropoutProb, dilation)
@@ -74,41 +70,53 @@ local function nonBt1D(inChannels, dropoutProb, dilation)
         :add(ReLU(true))
 end
 
+local function bottleneckBox(inChannels, numBoxes, dropoutProb, h, w)
+    assert(inChannels % numBoxes == 0)
+    local btChannels = inChannels / numBoxes
+
+    dropoutProb = dropoutProb or 0
+
+    local mainBranch = nn.Sequential()
+        :add(SpatialConvolution(inChannels, btChannels, 1,1, 1,1))
+        :add(SpatialBatchNormalization(btChannels))
+
+        :add(BoxConvolution(btChannels, numBoxes, h, w))
+        
+        -- :add(SpatialConvolution(inChannels, inChannels, 1,1, 1,1))
+        :add(SpatialBatchNormalization(inChannels))
+        
+        :add(dropoutProb ~= 0 and nn.SpatialDropout(dropoutProb) or nn.Identity())
+
+    return nn.Sequential()
+        :add(nn.ConcatTable()
+            :add(nn.Identity())
+            :add(mainBranch))
+        :add(nn.CAddTable())
+        :add(ReLU(true))
+end
+
 local model = nn.Sequential()
 
 model:add(downsampler( 3, 16, 0.0 ))
 model:add(downsampler(16, 64, 0.03))
 
 model:add(nonBt1D(64, 0.03))
-model:add(nonBt1D(64, 0.03))
-model:add(nonBt1D(64, 0.03))
-model:add(nonBt1D(64, 0.03))
-model:add(nonBt1D(64, 0.03))
 
 model:add(downsampler(64, 128, 0.3))
 
 model:add(nonBt1D(128, 0.3,  2))
 model:add(nonBt1D(128, 0.3,  4))
-model:add(nonBt1D(128, 0.3,  8))
-model:add(nonBt1D(128, 0.3, 16))
+
+
 model:add(nonBt1D(128, 0.3,  2))
 model:add(nonBt1D(128, 0.3,  4))
-model:add(nonBt1D(128, 0.3,  8))
-model:add(nonBt1D(128, 0.3, 16))
 
 model:add(upsampler(128, 64))
-
-model:add(nonBt1D(64))
 model:add(nonBt1D(64))
 
 model:add(upsampler(64, 16))
-
-model:add(nonBt1D(16))
 model:add(nonBt1D(16))
 
 model:add(SpatialFullConvolution(16, nClasses+1, 3,3, 2,2, 1,1, 1,1))
 
-local GSconfig = {
-}
-
-return model, GSconfig
+return model, {}

@@ -90,6 +90,9 @@ void integralImageCuda(THCState *state,
 
     cublasSetStream(THCState_getCurrentBlasHandle(state), THCState_getCurrentStream(state));
 
+    // Compute prefix sums of columns, `input` -> `output`
+    // (channels) x (h) x (w) ==> (channels) x (h+1) x (w+1)
+    // Note: output[:,:,0] remains uninitialized
     int totalCols = channels * w;
     blockSize1D = NUM_THREADS;
     gridSize1D = (totalCols + blockSize1D - 1) / blockSize1D;
@@ -97,6 +100,8 @@ void integralImageCuda(THCState *state,
         (input, output, channels, h, w);
     THCudaCheck(cudaGetLastError());
 
+    // transpose, `output` -> `tmp`
+    // (channels) x (h+1) x (w+1) ==> (w+1) x (channels) x (h+1)
     THCublasCheck(cublasSgeam(
         THCState_getCurrentBlasHandle(state),
         CUBLAS_OP_T, CUBLAS_OP_N, channels * (h+1), w+1,
@@ -104,6 +109,8 @@ void integralImageCuda(THCState *state,
         &ZERO, tmp, channels * (h+1),
         tmp, channels * (h+1)));
 
+    // Compute prefix sums of columns (former rows), `tmp` -> `tmp`
+    // (w+1) x (channels) x (h+1) ==> (w+1) x (channels) x (h+1)
     int totalRows = channels * h; // actually, number of cols in (w+1) x (channels * (h+1)) image
     blockSize1D = NUM_THREADS;
     gridSize1D = (totalRows + blockSize1D - 1) / blockSize1D;
@@ -111,6 +118,8 @@ void integralImageCuda(THCState *state,
         <<<gridSize1D, blockSize1D, 0, THCState_getCurrentStream(state)>>> (tmp, channels, h, w);
     THCudaCheck(cudaGetLastError());
 
+    // transpose, `tmp` -> `output`
+    // (w+1) x (channels) x (h+1) ==> (channels) x (h+1) x (w+1)
     THCublasCheck(cublasSgeam(
         THCState_getCurrentBlasHandle(state),
         CUBLAS_OP_T, CUBLAS_OP_N, w+1, channels * (h+1),
